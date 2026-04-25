@@ -7,10 +7,10 @@ A Node CLI that reads `i18n.config.json` and reconciles your locale files agains
 ## Install
 
 ```bash
-pnpm add -D lexen
+pnpm add -D @thelol3882/lexen
 ```
 
-`lexen` ships its own `typescript` and `glob` deps; no peer deps to satisfy.
+`lexen` ships its own `typescript` and `glob` deps; no peer deps to satisfy. The bin command is `lexen` (unscoped) regardless of the install path.
 
 ## Quick start
 
