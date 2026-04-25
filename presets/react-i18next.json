@@ -1,0 +1,17 @@
+{
+  "srcDir": "src",
+  "locales": ["en"],
+  "defaultLocale": "en",
+  "filePatterns": ["**/*.{ts,tsx}"],
+  "ignore": ["**/*.d.ts", "**/node_modules/**"],
+  "hook": {
+    "name": "useTranslation",
+    "package": "react-i18next"
+  },
+  "layout": {
+    "feature": "features/{namespace}/locales/{locale}.json",
+    "global": "locales/{locale}/common.json",
+    "globalNamespace": "common",
+    "featuresDir": "features"
+  }
+}

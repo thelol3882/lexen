@@ -1,0 +1,48 @@
+{
+    "name": "lexen",
+    "version": "0.1.0",
+    "description": "Config-driven translation extraction, validation, and sorting for next-intl, react-i18next, and friends. Built on the TypeScript compiler API.",
+    "type": "module",
+    "bin": {
+        "lexen": "./dist/index.js"
+    },
+    "files": [
+        "dist",
+        "README.md",
+        "ROADMAP.md",
+        "RULES.md",
+        "STRATEGY.md"
+    ],
+    "scripts": {
+        "build": "tsc && node scripts/copy-presets.mjs",
+        "dev": "tsx index.ts",
+        "test": "tsx __tests__/run-fixtures.ts",
+        "typecheck": "tsc --noEmit",
+        "prepublishOnly": "pnpm build"
+    },
+    "dependencies": {
+        "glob": "^13.0.0",
+        "typescript": "^5.5.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "tsx": "^4.19.0"
+    },
+    "engines": {
+        "node": ">=18"
+    },
+    "keywords": [
+        "i18n",
+        "next-intl",
+        "react-i18next",
+        "translation",
+        "extraction",
+        "ast",
+        "cli",
+        "typescript"
+    ],
+    "license": "MIT",
+    "publishConfig": {
+        "access": "public"
+    }
+}

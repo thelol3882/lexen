@@ -1,0 +1,18 @@
+{
+  "srcDir": "src",
+  "locales": ["en"],
+  "defaultLocale": "en",
+  "filePatterns": ["**/*.{ts,tsx}"],
+  "ignore": ["**/*.d.ts"],
+  "hook": {"name": "useTranslations", "package": "next-intl"},
+  "resolver": {"mode": "typechecker", "propFlow": true},
+  "layout": {
+    "feature": "features/{namespace}/locales/{locale}.json",
+    "widget": "widgets/{widget}/locales/{locale}.json",
+    "widgetNamespacePrefix": "widget",
+    "global": "i18n/messages/{locale}.json",
+    "globalNamespace": "common",
+    "featuresDir": "features",
+    "widgetsDir": "widgets"
+  }
+}
