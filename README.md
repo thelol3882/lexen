@@ -4,6 +4,12 @@ Config-driven translation extraction, validation, and sorting. Built on the Type
 
 A Node CLI that reads `i18n.config.json` and reconciles your locale files against what's actually used in code. Framework-agnostic — works with `next-intl`, `react-i18next`, or any hook-based translation API you configure.
 
+## Status
+
+I built lexen for my own projects and publish it as a convenience for anyone who finds it useful. It's not a community-driven package — issue triage, PR review, feature requests, and backwards-compat guarantees are best-effort at most. Releases happen when my own work needs them.
+
+If lexen does what you need: great, use it. If you need active maintenance or features I haven't built, fork it (MIT) — that's probably the right call. Pin to an exact version if you depend on it in production.
+
 ## Install
 
 ```bash
