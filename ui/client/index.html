@@ -3,26 +3,23 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Lexen — a translator's editor</title>
+    <title>Lexen</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..900,0..100;1,9..144,300..900,0..100&family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,400..700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-<div class="paper" aria-hidden="true"></div>
-
 <header class="masthead">
     <div class="masthead-left">
-        <h1 class="wordmark">Lexen<span class="wordmark-dot">.</span></h1>
-        <p class="dek">A translator's editor <span class="rule">—</span> set in cream &amp; ink</p>
+        <h1 class="wordmark">Lexen</h1>
+        <span class="progress-chip" id="progress-chip" aria-live="polite"></span>
     </div>
     <nav class="controls">
         <label class="control">
             <span class="control-label">Source</span>
             <select id="source-locale" disabled></select>
         </label>
-        <span class="control-arrow" aria-hidden="true">⟶</span>
         <label class="control">
             <span class="control-label">Target</span>
             <select id="target-locale"></select>
@@ -31,31 +28,26 @@
             <span class="control-label">Find</span>
             <input id="search" type="search" placeholder="key or text fragment…">
         </label>
-        <label class="control control-toggle">
+        <label class="control control-toggle" title="Show only entries that are still untranslated for the target locale">
             <input id="missing-only" type="checkbox">
             <span class="control-label">Untranslated only</span>
         </label>
+        <label class="control control-toggle" title="Reveal key paths and source-file references — useful when pairing with a developer">
+            <input id="show-context" type="checkbox">
+            <span class="control-label">Source context</span>
+        </label>
+        <button id="theme-toggle" type="button" class="theme-toggle" title="Toggle theme" aria-label="Toggle theme">
+            <span class="theme-glyph"></span>
+        </button>
     </nav>
 </header>
 
 <div class="frame">
     <aside class="rail">
-        <h2 class="rail-title"><span class="ornament">⁂</span> Namespaces</h2>
         <ol class="namespaces" id="namespaces"></ol>
-        <p class="rail-foot" id="rail-foot"></p>
     </aside>
-    <main class="entries" id="rows">
-        <p class="empty"><span class="dropcap">L</span>oading the lexicon&hellip;</p>
-    </main>
+    <main class="entries" id="rows"></main>
 </div>
-
-<footer class="colophon">
-    <span><em>Lexen</em></span>
-    <span class="dot">·</span>
-    <span>edits write back to your locale JSON files</span>
-    <span class="dot">·</span>
-    <span><kbd>⌃</kbd><kbd>C</kbd> to close the press</span>
-</footer>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
