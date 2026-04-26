@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Lexen — translator editor</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+    <div class="brand">
+        <span class="logo">lexen</span>
+        <span class="tag">translator editor</span>
+    </div>
+    <div class="controls">
+        <label class="control">
+            <span>Source</span>
+            <select id="source-locale" disabled></select>
+        </label>
+        <label class="control">
+            <span>Target</span>
+            <select id="target-locale"></select>
+        </label>
+        <label class="control search">
+            <span>Search</span>
+            <input id="search" type="search" placeholder="key or text…">
+        </label>
+        <label class="control toggle">
+            <input id="missing-only" type="checkbox">
+            <span>Missing only</span>
+        </label>
+    </div>
+</header>
+
+<main>
+    <aside id="namespaces" class="rail"></aside>
+    <section id="rows" class="rows">
+        <p class="empty">Loading…</p>
+    </section>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

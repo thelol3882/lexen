@@ -7,6 +7,7 @@ import {loadConfig} from './config.js';
 import {extractAll} from './extract.js';
 import {sortAll} from './locales.js';
 import {runSync} from './sync.js';
+import {runUi} from './ui/run.js';
 import {c, log} from './util/log.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -15,7 +16,7 @@ const __dirname = path.dirname(__filename);
 const PRESETS_DIR = path.join(__dirname, 'presets');
 const DEFAULT_PRESET = 'next-intl';
 
-const SUBCOMMANDS = ['extract', 'check', 'sort', 'init'] as const;
+const SUBCOMMANDS = ['extract', 'check', 'sort', 'init', 'ui'] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function listPresets(): string[] {
@@ -46,6 +47,8 @@ function printUsage(): void {
     log(`  ${c.cyan}pnpm lexen check${c.reset}   [feature]              CI mode — fail on drift or invalid namespaces`);
     log(`  ${c.cyan}pnpm lexen sort${c.reset}                            normalize key order in every locale file`);
     log(`  ${c.cyan}pnpm lexen init${c.reset}    [--preset=<name>] [--force]  scaffold i18n.config.json`);
+    log(`  ${c.cyan}pnpm lexen ui${c.reset}     [--port=4310] [--host=127.0.0.1] [--source-locale=<code>] [--no-open]`);
+    log(`                                       launch a local web editor for translators`);
     log('');
     log(`Exit codes: ${c.dim}0 ok · 1 drift · 2 invalid namespace · 3 config/usage error${c.reset}`);
 }
@@ -180,7 +183,12 @@ function sortedEntries<T>(map: Map<string, T>): [string, T][] {
     return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
 
-function main(): number {
+/**
+ * Returns the exit code, or `null` to mean "the subcommand is now holding the
+ * event loop open (e.g. an HTTP server) — do NOT call process.exit". The
+ * caller distinguishes the two so we don't terminate a long-running server.
+ */
+function main(): number | null {
     const args = process.argv.slice(2);
 
     // Project root is the user's CWD (where they invoke `lexen`), not lexen's
@@ -210,11 +218,15 @@ function main(): number {
             return runExtractOrCheck(args, projectRoot, {checkOnly: false});
         case 'check':
             return runExtractOrCheck(args, projectRoot, {checkOnly: true});
+        case 'ui':
+            return runUi(args, projectRoot);
     }
 }
 
 try {
-    process.exit(main());
+    const code = main();
+    if (code !== null) process.exit(code);
+    // null → a subcommand (currently `ui`) is keeping the event loop alive.
 } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`\n${c.red}Error: ${msg}${c.reset}`);

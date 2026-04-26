@@ -50,6 +50,7 @@ Then `pnpm i18n extract`, `pnpm i18n check`, etc.
 | `lexen check` | CI mode — fail (exit 1) on missing / unused / invalid-namespace drift. |
 | `lexen sort` | Normalize key order in every locale file (deep-sort, alphabetical). |
 | `lexen init` | Scaffold `i18n.config.json` from a preset (`--preset`, `--force`). |
+| `lexen ui` | Launch a local web editor for translators (`--port`, `--host`, `--source-locale`, `--no-open`). |
 
 All commands print per-locale translation coverage stats at the end.
 
@@ -234,6 +235,25 @@ For CI pipelines: route failures by exit code.
 
 `lexen check` returns any of these; `extract` / `sort` / `init` return `0` on success or `3` on config error.
 
+## Translator UI (`lexen ui`)
+
+Real translators don't want to touch JSON or git. `lexen ui` boots a local web editor where each key shows the source-locale string (with ICU placeholders highlighted) and a textarea for the target locale; saves write back to the same JSON files `extract` / `check` use.
+
+```bash
+pnpm exec lexen ui                           # localhost:4310, opens browser
+pnpm exec lexen ui --source-locale=en        # pick which locale is the read-only reference
+pnpm exec lexen ui --host=0.0.0.0 --port=4310 # share over LAN
+pnpm exec lexen ui --no-open                  # don't auto-open the browser
+```
+
+The server is unauthenticated and intended for trusted local use. To hand it to a remote translator: pair on a screenshare, expose it on the LAN with `--host=0.0.0.0`, or run a tunnel (e.g. `cloudflared tunnel`, `ngrok http 4310`). For sustained remote translator workflows, plug in an external TMS instead.
+
+What the UI is and isn't:
+
+- **Is**: a faster way for a translator to fill empty strings, with placeholder validation and progress per namespace.
+- **Isn't**: a way to add or rename keys — those still come from code via `lexen extract`.
+- **Isn't**: a CI gate — keep using `lexen check` for that. The UI surfaces placeholder mismatches non-blockingly so the translator can fix them; `check` is the hard gate.
+
 ## Placeholder drift
 
 `lexen check` validates that every locale uses the same ICU placeholder variables for each key:
@@ -275,13 +295,18 @@ lexen/
 ├── validate.ts         Namespace usage + ICU placeholder-drift + preserve hygiene.
 ├── sync.ts             Reconciles extracted keys ↔ locale files.
 ├── types.ts            Shared type definitions.
+├── ui/
+│   ├── server.ts       node:http server — /api/state, PATCH /api/translate, static.
+│   ├── run.ts          `lexen ui` entry — flag parsing, banner, browser opener.
+│   └── client/         Vanilla HTML + ES module + CSS, no build step.
 ├── util/
 │   ├── log.ts          ANSI color helpers.
 │   └── paths.ts        Config-driven path resolution + scope detection.
 ├── presets/            Starter i18n.config.json templates.
 └── __tests__/
     ├── fixtures/       Hand-crafted TS project exercising each resolver pattern.
-    └── run-fixtures.ts Dependency-free fixture runner (`pnpm test`).
+    ├── run-fixtures.ts Dependency-free fixture runner (`pnpm test`).
+    └── run-ui.ts       UI server smoke test — boots the server, exercises the API.
 ```
 
 ESM throughout, no global state. `index.ts` is the only file that touches `process.argv` / `process.exit`. Everything else is a pure function taking a resolved config object.
