@@ -2,7 +2,8 @@
 /**
  * Smoke test for the `lexen ui` HTTP server. Copies the existing extractor
  * fixture to a tempdir, adds a second locale, boots createServer() on an
- * ephemeral port, and exercises /api/state + /api/translate end-to-end.
+ * ephemeral port, and exercises /api/index, /api/namespace, /api/translate,
+ * and /api/refresh end-to-end.
  *
  * Dependency-free, like run-fixtures.ts — no vitest, no jest.
  */
@@ -32,7 +33,6 @@ function pass(msg: string): void {
 }
 
 async function main(): Promise<number> {
-    // 1. Copy fixture to tempdir, add a second locale.
     const tmp = mkdtempSync(path.join(os.tmpdir(), 'lexen-ui-'));
     cpSync(FIXTURES_DIR, tmp, {recursive: true});
     const cfgPath = path.join(tmp, 'i18n.config.json');
@@ -48,9 +48,11 @@ async function main(): Promise<number> {
     const base = `http://127.0.0.1:${addr.port}`;
 
     try {
-        await testStateShape(base);
+        await testIndexShape(base);
+        await testNamespacePayload(base);
         await testRoundTrip(base, tmp);
         await testValidationErrors(base);
+        await testRefresh(base);
         await testStaticServing(base);
     } finally {
         await new Promise<void>(resolve => server.close(() => resolve()));
@@ -66,69 +68,112 @@ async function main(): Promise<number> {
     return 0;
 }
 
-interface StateKey {
+interface IndexEntry { name: string; total: number; filled: number }
+interface IndexBody {
+    locales: string[];
+    sourceLocale: string;
+    target: string;
+    namespaces: IndexEntry[];
+    unresolvedCalls: number;
+}
+interface KeyEntry {
     key: string;
     values: Record<string, string>;
     sourcePlaceholders: string[];
     usages: {file: string; line: number}[];
 }
-interface StateNs { name: string; keys: StateKey[] }
-interface StateBody {
-    locales: string[];
-    sourceLocale: string;
-    namespaces: StateNs[];
-    unresolvedCalls: number;
-}
+interface NamespaceBody { name: string; keys: KeyEntry[] }
 
-async function testStateShape(base: string): Promise<void> {
-    const res = await fetch(`${base}/api/state`);
+async function testIndexShape(base: string): Promise<void> {
+    const res = await fetch(`${base}/api/index?target=ru`);
     if (res.status !== 200) {
-        fail(`/api/state status: expected 200, got ${res.status}`);
+        fail(`/api/index status: expected 200, got ${res.status}`);
         return;
     }
-    const body = (await res.json()) as StateBody;
+    const body = (await res.json()) as IndexBody;
 
     if (body.locales.join(',') !== 'en,ru') {
-        fail(`/api/state locales: expected [en,ru], got [${body.locales.join(',')}]`);
+        fail(`/api/index locales: expected [en,ru], got [${body.locales.join(',')}]`);
         return;
     }
     if (body.sourceLocale !== 'en') {
-        fail(`/api/state sourceLocale: expected en, got ${body.sourceLocale}`);
+        fail(`/api/index sourceLocale: expected en, got ${body.sourceLocale}`);
+        return;
+    }
+    if (body.target !== 'ru') {
+        fail(`/api/index target: expected ru, got ${body.target}`);
         return;
     }
     const demo = body.namespaces.find(n => n.name === 'demo');
     if (!demo) {
-        fail('/api/state: expected namespace "demo" to be present');
+        fail('/api/index: expected namespace "demo" to be present');
         return;
     }
-    if (demo.keys.length === 0) {
-        fail('/api/state: expected demo namespace to have keys');
+    if (typeof demo.total !== 'number' || typeof demo.filled !== 'number') {
+        fail(`/api/index "demo": total/filled must be numbers, got total=${demo.total} filled=${demo.filled}`);
         return;
     }
-    const sample = demo.keys[0];
+    if ('keys' in (demo as object)) {
+        fail('/api/index: should not include per-key data');
+        return;
+    }
+    pass(`/api/index shape (locales, target, per-namespace counts, no key data)`);
+
+    const badRes = await fetch(`${base}/api/index?target=fr`);
+    if (badRes.status !== 400) {
+        fail(`/api/index?target=fr: expected 400, got ${badRes.status}`);
+        return;
+    }
+    pass('/api/index rejects unknown target locale with 400');
+}
+
+async function testNamespacePayload(base: string): Promise<void> {
+    const res = await fetch(`${base}/api/namespace?name=demo`);
+    if (res.status !== 200) {
+        fail(`/api/namespace?name=demo status: expected 200, got ${res.status}`);
+        return;
+    }
+    const body = (await res.json()) as NamespaceBody;
+    if (body.name !== 'demo') {
+        fail(`/api/namespace name: expected "demo", got "${body.name}"`);
+        return;
+    }
+    if (body.keys.length === 0) {
+        fail('/api/namespace: expected demo to have keys');
+        return;
+    }
+    const sample = body.keys[0];
     if (!('en' in sample.values) || !('ru' in sample.values)) {
-        fail(`/api/state: key "${sample.key}" missing per-locale values`);
+        fail(`/api/namespace key "${sample.key}" missing per-locale values`);
         return;
     }
-    pass(`/api/state shape (locales, sourceLocale, namespaces.keys.values)`);
+    pass(`/api/namespace?name=demo returns ${body.keys.length} keys with values per locale`);
+
+    const missing = await fetch(`${base}/api/namespace?name=does.not.exist`);
+    if (missing.status !== 404) {
+        fail(`/api/namespace unknown name: expected 404, got ${missing.status}`);
+        return;
+    }
+    pass('/api/namespace 404s on unknown name');
+
+    const noName = await fetch(`${base}/api/namespace`);
+    if (noName.status !== 400) {
+        fail(`/api/namespace no name: expected 400, got ${noName.status}`);
+        return;
+    }
+    pass('/api/namespace 400s without ?name');
 }
 
 async function testRoundTrip(base: string, projectRoot: string): Promise<void> {
-    const stateRes = await fetch(`${base}/api/state`);
-    const state = (await stateRes.json()) as StateBody;
-    const demo = state.namespaces.find(n => n.name === 'demo')!;
-    const target = demo.keys.find(k => k.key === 'literal.hello') ?? demo.keys[0];
+    const nsRes = await fetch(`${base}/api/namespace?name=demo`);
+    const ns = (await nsRes.json()) as NamespaceBody;
+    const target = ns.keys.find(k => k.key === 'literal.hello') ?? ns.keys[0];
 
     const value = 'Привет, мир';
     const res = await fetch(`${base}/api/translate`, {
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            namespace: 'demo',
-            key: target.key,
-            locale: 'ru',
-            value,
-        }),
+        body: JSON.stringify({namespace: 'demo', key: target.key, locale: 'ru', value}),
     });
     const body = (await res.json()) as {ok?: boolean; error?: string};
     if (res.status !== 200 || !body.ok) {
@@ -149,17 +194,23 @@ async function testRoundTrip(base: string, projectRoot: string): Promise<void> {
     }
     pass(`PATCH /api/translate round-trip writes ${target.key} = ${JSON.stringify(value)}`);
 
-    // And /api/state should now reflect the written value.
-    const stateRes2 = await fetch(`${base}/api/state`);
-    const state2 = (await stateRes2.json()) as StateBody;
-    const refreshed = state2.namespaces
-        .find(n => n.name === 'demo')!
-        .keys.find(k => k.key === target.key)!;
+    const nsRes2 = await fetch(`${base}/api/namespace?name=demo`);
+    const ns2 = (await nsRes2.json()) as NamespaceBody;
+    const refreshed = ns2.keys.find(k => k.key === target.key)!;
     if (refreshed.values.ru !== value) {
-        fail(`/api/state did not reflect saved value (got ${JSON.stringify(refreshed.values.ru)})`);
+        fail(`/api/namespace did not reflect saved value (got ${JSON.stringify(refreshed.values.ru)})`);
         return;
     }
-    pass('/api/state reflects saved value on next read');
+    pass('/api/namespace reflects saved value on next read');
+
+    const idxRes = await fetch(`${base}/api/index?target=ru`);
+    const idx = (await idxRes.json()) as IndexBody;
+    const demoIdx = idx.namespaces.find(n => n.name === 'demo')!;
+    if (demoIdx.filled < 1) {
+        fail(`/api/index?target=ru "demo".filled: expected ≥1 after save, got ${demoIdx.filled}`);
+        return;
+    }
+    pass(`/api/index?target=ru reflects filled count (demo.filled=${demoIdx.filled})`);
 }
 
 async function testValidationErrors(base: string): Promise<void> {
@@ -184,6 +235,27 @@ async function testValidationErrors(base: string): Promise<void> {
         return;
     }
     pass('PATCH rejects missing fields with 400');
+}
+
+async function testRefresh(base: string): Promise<void> {
+    const res = await fetch(`${base}/api/refresh`, {method: 'POST'});
+    if (res.status !== 200) {
+        fail(`POST /api/refresh: expected 200, got ${res.status}`);
+        return;
+    }
+    const body = (await res.json()) as {ok?: boolean};
+    if (!body.ok) {
+        fail(`POST /api/refresh: expected ok, got ${JSON.stringify(body)}`);
+        return;
+    }
+    pass('POST /api/refresh clears cache');
+
+    const wrongMethod = await fetch(`${base}/api/refresh`);
+    if (wrongMethod.status === 200) {
+        fail(`/api/refresh should not respond to GET`);
+        return;
+    }
+    pass(`GET /api/refresh declined (${wrongMethod.status})`);
 }
 
 async function testStaticServing(base: string): Promise<void> {

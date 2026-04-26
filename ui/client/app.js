@@ -1,6 +1,3 @@
-// Lexen translator UI — vanilla ES module.
-// DOM is structured like a dictionary: rail = table of contents, each row = entry.
-
 const $ = (sel) => document.querySelector(sel);
 
 const els = {
@@ -14,22 +11,24 @@ const els = {
     toast: $('#toast'),
 };
 
+const STAGGER_CAP = 30; // cap per-item animation index so 1000+ rows don't cascade for seconds
+const CHUNK = 60;
+
 const state = {
     locales: [],
     sourceLocale: '',
     targetLocale: '',
-    namespaces: [],
+    index: [],
+    namespaceCache: new Map(),
     activeNamespace: null,
     search: '',
     missingOnly: false,
 };
 
-// Cap the per-item animation delay so a 7000-key namespace doesn't cascade
-// for 16+ seconds (16ms × 1000 = 16s). After this index everything appears
-// in the same frame.
-const STAGGER_CAP = 30;
+// Token for the in-flight chunk loop — bumped on namespace switch / filter
+// change so a stale loop bails out instead of mixing renders.
+let renderJob = null;
 
-// Roman numerals so the rail reads like a printed table of contents.
 function toRoman(n) {
     const map = [
         ['M', 1000], ['CM', 900], ['D', 500], ['CD', 400],
@@ -50,32 +49,47 @@ function toast(msg, kind = 'info') {
     toastTimer = setTimeout(() => els.toast.classList.remove('show'), 2400);
 }
 
-async function loadState() {
+async function fetchJson(url, init) {
+    const res = await fetch(url, init);
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+        const msg = (body && body.error) || `HTTP ${res.status}`;
+        throw new Error(`${url} → ${msg}`);
+    }
+    return body;
+}
+
+async function loadIndex() {
     try {
-        const res = await fetch('/api/state');
-        if (!res.ok) throw new Error(`GET /api/state → ${res.status}`);
-        const data = await res.json();
+        const target = state.targetLocale || '';
+        const url = '/api/index' + (target ? `?target=${encodeURIComponent(target)}` : '');
+        const data = await fetchJson(url);
         state.locales = data.locales;
         state.sourceLocale = data.sourceLocale;
-        state.namespaces = data.namespaces;
         if (!state.targetLocale || !state.locales.includes(state.targetLocale)) {
             state.targetLocale =
                 state.locales.find(l => l !== state.sourceLocale) ?? state.sourceLocale;
+            // First request used a default target; refetch counts for the real one.
+            if (state.targetLocale !== data.target) return loadIndex();
         }
-        if (!state.activeNamespace || !state.namespaces.some(n => n.name === state.activeNamespace)) {
-            state.activeNamespace = state.namespaces[0]?.name ?? null;
+        state.index = data.namespaces;
+        if (!state.activeNamespace || !state.index.some(n => n.name === state.activeNamespace)) {
+            state.activeNamespace = state.index[0]?.name ?? null;
         }
-        renderAll();
+        renderLocaleSelectors();
+        renderNamespaces();
+        renderRailFoot();
+        renderRows();
     } catch (err) {
-        toast(`Failed to load: ${err.message}`, 'err');
+        toast(`Failed to load index: ${err.message}`, 'err');
     }
 }
 
-function renderAll() {
-    renderLocaleSelectors();
-    renderNamespaces();
-    renderRailFoot();
-    renderRows();
+async function loadNamespace(name) {
+    if (state.namespaceCache.has(name)) return state.namespaceCache.get(name);
+    const data = await fetchJson(`/api/namespace?name=${encodeURIComponent(name)}`);
+    state.namespaceCache.set(name, data);
+    return data;
 }
 
 function renderLocaleSelectors() {
@@ -97,16 +111,9 @@ function renderLocaleSelectors() {
     }
 }
 
-function progressFor(ns, locale) {
-    const total = ns.keys.length;
-    let filled = 0;
-    for (const k of ns.keys) if (k.values[locale]) filled++;
-    return {filled, total};
-}
-
 function renderNamespaces() {
     els.namespaces.innerHTML = '';
-    if (state.namespaces.length === 0) {
+    if (state.index.length === 0) {
         const li = document.createElement('li');
         li.className = 'ns-row';
         li.innerHTML = `<div class="ns-button" style="grid-template-columns:1fr">
@@ -115,13 +122,12 @@ function renderNamespaces() {
         els.namespaces.appendChild(li);
         return;
     }
-    state.namespaces.forEach((ns, i) => {
-        const {filled, total} = progressFor(ns, state.targetLocale);
+    state.index.forEach((ns, i) => {
         const li = document.createElement('li');
         li.className = 'ns-row' + (ns.name === state.activeNamespace ? ' active' : '');
         li.style.setProperty('--i', String(Math.min(i, STAGGER_CAP)));
         li.dataset.namespace = ns.name;
-        const pct = total > 0 ? filled / total : 0;
+        const pct = ns.total > 0 ? ns.filled / ns.total : 0;
 
         const btn = document.createElement('button');
         btn.className = 'ns-button';
@@ -143,7 +149,7 @@ function renderNamespaces() {
         bar.dataset.role = 'bar';
         const frac = document.createElement('span');
         frac.className = 'ns-frac';
-        frac.textContent = `${filled}⁄${total}`;
+        frac.textContent = `${ns.filled}⁄${ns.total}`;
         frac.dataset.role = 'frac';
         meta.appendChild(bar);
         meta.appendChild(frac);
@@ -153,8 +159,12 @@ function renderNamespaces() {
         btn.appendChild(meta);
 
         btn.addEventListener('click', () => {
+            if (state.activeNamespace === ns.name) return;
             state.activeNamespace = ns.name;
-            renderNamespaces();
+            for (const el of els.namespaces.querySelectorAll('.ns-row.active')) {
+                el.classList.remove('active');
+            }
+            li.classList.add('active');
             renderRows();
         });
 
@@ -163,40 +173,38 @@ function renderNamespaces() {
     });
 }
 
-// Update only the affected namespace's progress bar + fraction in place.
-// Avoids re-rendering the whole rail (and re-triggering the stagger animation)
-// every time the translator saves a string.
+// In-place — avoids re-rendering the whole rail (and re-triggering its stagger animation) on every save.
 function updateNamespaceProgress(name) {
-    const ns = state.namespaces.find(n => n.name === name);
-    if (!ns) return;
+    const entry = state.index.find(n => n.name === name);
+    if (!entry) return;
     const li = els.namespaces.querySelector(`[data-namespace="${CSS.escape(name)}"]`);
     if (!li) return;
-    const {filled, total} = progressFor(ns, state.targetLocale);
     const bar = li.querySelector('[data-role="bar"]');
     const frac = li.querySelector('[data-role="frac"]');
-    if (bar) bar.style.setProperty('--p', String(total > 0 ? filled / total : 0));
-    if (frac) frac.textContent = `${filled}⁄${total}`;
+    const pct = entry.total > 0 ? entry.filled / entry.total : 0;
+    if (bar) bar.style.setProperty('--p', String(pct));
+    if (frac) frac.textContent = `${entry.filled}⁄${entry.total}`;
 }
 
 function renderRailFoot() {
-    if (state.namespaces.length === 0) {
+    if (state.index.length === 0) {
         els.railFoot.textContent = '';
         return;
     }
     let totalKeys = 0, totalFilled = 0;
-    for (const ns of state.namespaces) {
-        totalKeys += ns.keys.length;
-        for (const k of ns.keys) if (k.values[state.targetLocale]) totalFilled++;
+    for (const ns of state.index) {
+        totalKeys += ns.total;
+        totalFilled += ns.filled;
     }
     const pct = totalKeys > 0 ? Math.round((totalFilled / totalKeys) * 100) : 0;
     els.railFoot.textContent =
-        `In ${state.namespaces.length} namespace(s), ${totalFilled} of ${totalKeys} keys translated for ⟨${state.targetLocale}⟩ — ${pct}%.`;
+        `In ${state.index.length} namespace(s), ${totalFilled} of ${totalKeys} keys translated for ⟨${state.targetLocale}⟩ — ${pct}%.`;
 }
 
-function renderRows() {
+async function renderRows() {
     els.rows.innerHTML = '';
-    const ns = state.namespaces.find(n => n.name === state.activeNamespace);
-    if (!ns) {
+
+    if (!state.activeNamespace) {
         const p = document.createElement('p');
         p.className = 'empty';
         p.innerHTML = `<span class="dropcap">S</span>elect a namespace from the table of contents to begin.`;
@@ -204,6 +212,18 @@ function renderRows() {
         return;
     }
 
+    const placeholder = document.createElement('p');
+    placeholder.className = 'empty';
+    placeholder.innerHTML = `<span class="dropcap">L</span>oading entries for <code style="font-family:var(--mono);font-style:normal">${escapeHtml(state.activeNamespace)}</code>&hellip;`;
+    els.rows.appendChild(placeholder);
+
+    const ns = await loadNamespace(state.activeNamespace).catch(err => {
+        toast(`Failed to load namespace: ${err.message}`, 'err');
+        return null;
+    });
+    if (!ns || state.activeNamespace !== ns.name) return; // user moved on
+
+    els.rows.innerHTML = '';
     const head = document.createElement('header');
     head.className = 'entries-head';
     head.innerHTML = `
@@ -212,29 +232,62 @@ function renderRows() {
     `;
     els.rows.appendChild(head);
 
-    const q = state.search.trim().toLowerCase();
-    const filtered = ns.keys.filter(k => {
-        if (state.missingOnly && k.values[state.targetLocale]) return false;
-        if (!q) return true;
-        if (k.key.toLowerCase().includes(q)) return true;
-        const src = (k.values[state.sourceLocale] ?? '').toLowerCase();
-        return src.includes(q);
-    });
+    const filtered = filterKeys(ns.keys);
 
     if (filtered.length === 0) {
         const p = document.createElement('p');
         p.className = 'empty';
-        p.innerHTML = state.missingOnly && ns.keys.length > 0
+        const total = ns.keys.length;
+        p.innerHTML = state.missingOnly && total > 0
             ? `<span class="dropcap">A</span>ll keys in this namespace are translated for ⟨${escapeHtml(state.targetLocale)}⟩.`
             : `<span class="dropcap">N</span>o entries match your search.`;
         els.rows.appendChild(p);
         return;
     }
 
-    filtered.forEach((k, i) => {
-        const row = renderRow(ns.name, k);
-        row.style.setProperty('--i', String(Math.min(i, STAGGER_CAP)));
+    const job = {ns: ns.name, filtered, idx: 0};
+    renderJob = job;
+    renderNextChunk(job);
+}
+
+function renderNextChunk(job) {
+    if (renderJob !== job) return; // superseded
+    const slice = job.filtered.slice(job.idx, job.idx + CHUNK);
+    for (let i = 0; i < slice.length; i++) {
+        const row = renderRow(job.ns, slice[i]);
+        const visIdx = job.idx + i;
+        if (visIdx < STAGGER_CAP) row.style.setProperty('--i', String(visIdx));
+        else row.classList.add('no-stagger');
         els.rows.appendChild(row);
+    }
+    job.idx += slice.length;
+
+    if (job.idx >= job.filtered.length) return;
+
+    const sentinel = document.createElement('div');
+    sentinel.className = 'render-sentinel';
+    sentinel.setAttribute('aria-hidden', 'true');
+    sentinel.textContent = `${job.filtered.length - job.idx} more entries below…`;
+    els.rows.appendChild(sentinel);
+
+    const obs = new IntersectionObserver(entries => {
+        if (entries[0].isIntersecting && renderJob === job) {
+            obs.disconnect();
+            sentinel.remove();
+            renderNextChunk(job);
+        }
+    }, {rootMargin: '600px 0px 600px 0px'});
+    obs.observe(sentinel);
+}
+
+function filterKeys(keys) {
+    const q = state.search.trim().toLowerCase();
+    return keys.filter(k => {
+        if (state.missingOnly && k.values[state.targetLocale]) return false;
+        if (!q) return true;
+        if (k.key.toLowerCase().includes(q)) return true;
+        const src = (k.values[state.sourceLocale] ?? '').toLowerCase();
+        return src.includes(q);
     });
 }
 
@@ -242,7 +295,6 @@ function renderRow(namespace, k) {
     const row = document.createElement('article');
     row.className = 'entry';
 
-    // Source side — set as a dictionary headword.
     const left = document.createElement('div');
     left.className = 'entry-source';
 
@@ -279,7 +331,6 @@ function renderRow(namespace, k) {
         left.appendChild(u);
     }
 
-    // Target side — the translator's hand.
     const right = document.createElement('div');
     right.className = 'entry-target';
 
@@ -311,6 +362,8 @@ function renderRow(namespace, k) {
         if (ta.readOnly) return;
         const value = ta.value;
         if (value === lastSaved) return;
+        const wasFilled = lastSaved.length > 0;
+        const nowFilled = value.length > 0;
         status.innerHTML = `<span class="glyph">⌛</span>setting type…`;
         status.className = 'entry-status';
         try {
@@ -329,6 +382,17 @@ function renderRow(namespace, k) {
 
             lastSaved = value;
             k.values[state.targetLocale] = value;
+
+            // Mutate cached index counts in place — avoids refetching /api/index.
+            if (state.targetLocale !== state.sourceLocale && wasFilled !== nowFilled) {
+                const idxEntry = state.index.find(n => n.name === namespace);
+                if (idxEntry) {
+                    idxEntry.filled += nowFilled ? 1 : -1;
+                    updateNamespaceProgress(namespace);
+                    renderRailFoot();
+                }
+            }
+
             const drift = placeholderDiff(k.sourcePlaceholders, body.placeholders ?? []);
             if (body.malformed) {
                 status.innerHTML = `<span class="glyph">⚠</span>malformed ICU placeholders`;
@@ -342,8 +406,6 @@ function renderRow(namespace, k) {
             }
             ta.classList.add('flash-saved');
             setTimeout(() => ta.classList.remove('flash-saved'), 600);
-            updateNamespaceProgress(namespace);
-            renderRailFoot();
         } catch (err) {
             status.innerHTML = `<span class="glyph">✕</span>error: ${escapeHtml(err.message)}`;
             status.className = 'entry-status err';
@@ -381,9 +443,9 @@ function escapeHtml(s) {
 
 els.targetLocale.addEventListener('change', e => {
     state.targetLocale = e.target.value;
-    renderNamespaces();
-    renderRailFoot();
-    renderRows();
+    // Filled counts are per-locale; refetch index. Per-namespace key cache
+    // already contains values for every locale, so it's reused as-is.
+    loadIndex();
 });
 els.search.addEventListener('input', e => {
     state.search = e.target.value;
@@ -394,4 +456,4 @@ els.missingOnly.addEventListener('change', e => {
     renderRows();
 });
 
-loadState();
+loadIndex();

@@ -12,9 +12,6 @@ import {c, log} from '../util/log.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Resolve the static client directory. When this file lives in dist/ui/, the
-// copy script places assets next to it under dist/ui/client. In dev (tsx) we
-// run from source, where ui/client/ sits beside ui/server.ts.
 const CLIENT_DIR = path.join(__dirname, 'client');
 
 const MIME: Record<string, string> = {
@@ -37,15 +34,22 @@ interface KeyEntry {
     usages: {file: string; line: number}[];
 }
 
-interface NamespaceEntry {
+interface NamespacePayload {
     name: string;
     keys: KeyEntry[];
 }
 
-interface StateResponse {
+interface IndexEntry {
+    name: string;
+    total: number;
+    filled: number;
+}
+
+interface IndexResponse {
     locales: string[];
     sourceLocale: string;
-    namespaces: NamespaceEntry[];
+    target: string;
+    namespaces: IndexEntry[];
     unresolvedCalls: number;
 }
 
@@ -63,11 +67,8 @@ export function createServer(config: Config, opts: UiServerOptions): http.Server
         );
     }
 
-    // Per-server cache for extractAll. The TS-compiler pass costs seconds on
-    // large projects (7k+ keys); calling it on every /api/state request makes
-    // navigation feel sluggish. Cache for the lifetime of the server process.
-    // POST /api/refresh clears it so devs can pick up newly added t() calls
-    // without restarting.
+    // extractAll runs the TS compiler — seconds on large projects. Cache it
+    // for the server's lifetime; POST /api/refresh clears so devs see new keys.
     const cache: {extracted: ExtractResult | null} = {extracted: null};
     const getExtract = (): ExtractResult => {
         if (cache.extracted) return cache.extracted;
@@ -107,8 +108,28 @@ async function handle(
     const url = new URL(req.url ?? '/', 'http://localhost');
     const pathname = url.pathname;
 
-    if (req.method === 'GET' && pathname === '/api/state') {
-        sendJson(res, 200, buildState(config, opts, cache));
+    if (req.method === 'GET' && pathname === '/api/index') {
+        const target = url.searchParams.get('target') ?? opts.sourceLocale;
+        if (!config.locales.includes(target)) {
+            sendJson(res, 400, {error: `unknown target locale: ${target}`});
+            return;
+        }
+        sendJson(res, 200, buildIndex(config, opts, cache, target));
+        return;
+    }
+
+    if (req.method === 'GET' && pathname === '/api/namespace') {
+        const name = url.searchParams.get('name') ?? '';
+        if (!name) {
+            sendJson(res, 400, {error: 'missing ?name=<namespace>'});
+            return;
+        }
+        const payload = buildNamespace(config, opts, cache, name);
+        if (!payload) {
+            sendJson(res, 404, {error: `unknown namespace: ${name}`});
+            return;
+        }
+        sendJson(res, 200, payload);
         return;
     }
 
@@ -133,51 +154,70 @@ async function handle(
     sendJson(res, 405, {error: `method not allowed: ${req.method} ${pathname}`});
 }
 
-function buildState(config: Config, opts: UiServerOptions, cache: CacheHandle): StateResponse {
+function buildIndex(
+    config: Config,
+    opts: UiServerOptions,
+    cache: CacheHandle,
+    target: string,
+): IndexResponse {
     const extracted = cache.getExtract();
-
-    const usagesByNs = new Map<string, {file: string; line: number}[]>();
-    for (const u of extracted.namespaceUsages) {
-        const list = usagesByNs.get(u.namespace) ?? [];
-        list.push({file: u.file, line: u.line});
-        usagesByNs.set(u.namespace, list);
-    }
-
-    const namespaces: NamespaceEntry[] = [];
     const sortedNamespaces = [...extracted.namespaceKeys.keys()].sort();
 
+    const namespaces: IndexEntry[] = [];
     for (const namespace of sortedNamespaces) {
         if (namespace.startsWith('<<')) continue; // skip <<bare>> sentinel
-        const keys = [...(extracted.namespaceKeys.get(namespace) ?? new Set<string>())].sort();
-        const data: Record<string, JsonObject> = {};
-        for (const locale of config.locales) {
-            data[locale] = readNamespace(config, namespace, locale);
+        const keys = extracted.namespaceKeys.get(namespace) ?? new Set<string>();
+        const total = keys.size;
+        const data = readNamespace(config, namespace, target);
+        let filled = 0;
+        for (const key of keys) {
+            const v = getNestedValue(data, key);
+            if (typeof v === 'string' && v.length > 0) filled++;
         }
-
-        const keyEntries: KeyEntry[] = keys.map(key => {
-            const values: Record<string, string> = {};
-            for (const locale of config.locales) {
-                const v = getNestedValue(data[locale], key);
-                values[locale] = typeof v === 'string' ? v : '';
-            }
-            const sourcePlaceholders = parsePlaceholders(values[opts.sourceLocale]).names;
-            return {
-                key,
-                values,
-                sourcePlaceholders,
-                usages: (usagesByNs.get(namespace) ?? []).slice(0, 5),
-            };
-        });
-
-        namespaces.push({name: namespace, keys: keyEntries});
+        namespaces.push({name: namespace, total, filled});
     }
 
     return {
         locales: config.locales,
         sourceLocale: opts.sourceLocale,
+        target,
         namespaces,
         unresolvedCalls: extracted.unresolvedCalls.length,
     };
+}
+
+function buildNamespace(
+    config: Config,
+    opts: UiServerOptions,
+    cache: CacheHandle,
+    namespace: string,
+): NamespacePayload | null {
+    const extracted = cache.getExtract();
+    const keySet = extracted.namespaceKeys.get(namespace);
+    if (!keySet) return null;
+
+    const usages = extracted.namespaceUsages
+        .filter(u => u.namespace === namespace)
+        .map(u => ({file: u.file, line: u.line}))
+        .slice(0, 5);
+
+    const keys = [...keySet].sort();
+    const data: Record<string, JsonObject> = {};
+    for (const locale of config.locales) {
+        data[locale] = readNamespace(config, namespace, locale);
+    }
+
+    const keyEntries: KeyEntry[] = keys.map(key => {
+        const values: Record<string, string> = {};
+        for (const locale of config.locales) {
+            const v = getNestedValue(data[locale], key);
+            values[locale] = typeof v === 'string' ? v : '';
+        }
+        const sourcePlaceholders = parsePlaceholders(values[opts.sourceLocale]).names;
+        return {key, values, sourcePlaceholders, usages};
+    });
+
+    return {name: namespace, keys: keyEntries};
 }
 
 interface PatchResult {
@@ -218,8 +258,8 @@ function applyTranslation(config: Config, body: PatchBody): PatchResult {
 
 function serveStatic(pathname: string, res: http.ServerResponse): void {
     const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
-    // Block path traversal — resolved file must stay under CLIENT_DIR.
     const target = path.normalize(path.join(CLIENT_DIR, rel));
+    // Path-traversal guard — resolved file must stay under CLIENT_DIR.
     if (!target.startsWith(CLIENT_DIR + path.sep) && target !== CLIENT_DIR) {
         sendJson(res, 403, {error: 'forbidden'});
         return;
@@ -241,7 +281,6 @@ function readJsonBody(req: http.IncomingMessage): Promise<PatchBody> {
         req.on('data', chunk => {
             chunks.push(chunk);
             total += chunk.length;
-            // 1 MB ceiling — translation payloads are tiny; anything larger is malformed.
             if (total > 1_000_000) {
                 req.destroy();
                 reject(new Error('request body too large'));
