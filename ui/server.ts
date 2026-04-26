@@ -5,8 +5,9 @@ import {fileURLToPath} from 'url';
 
 import {extractAll} from '../extract.js';
 import {readNamespace, writeNamespace, getNestedValue, setNestedValue} from '../locales.js';
-import type {Config, JsonObject} from '../types.js';
+import type {Config, ExtractResult, JsonObject} from '../types.js';
 import {parsePlaceholders} from '../validate.js';
+import {c, log} from '../util/log.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,12 +63,38 @@ export function createServer(config: Config, opts: UiServerOptions): http.Server
         );
     }
 
+    // Per-server cache for extractAll. The TS-compiler pass costs seconds on
+    // large projects (7k+ keys); calling it on every /api/state request makes
+    // navigation feel sluggish. Cache for the lifetime of the server process.
+    // POST /api/refresh clears it so devs can pick up newly added t() calls
+    // without restarting.
+    const cache: {extracted: ExtractResult | null} = {extracted: null};
+    const getExtract = (): ExtractResult => {
+        if (cache.extracted) return cache.extracted;
+        const t0 = Date.now();
+        cache.extracted = extractAll(config);
+        log(`${c.dim}[lexen ui] extracted ${countKeys(cache.extracted)} keys in ${Date.now() - t0}ms (cached)${c.reset}`);
+        return cache.extracted;
+    };
+
     return http.createServer((req, res) => {
-        handle(req, res, config, opts).catch(err => {
-            const msg = err instanceof Error ? err.message : String(err);
-            sendJson(res, 500, {error: msg});
-        });
+        handle(req, res, config, opts, {getExtract, clearCache: () => { cache.extracted = null; }})
+            .catch(err => {
+                const msg = err instanceof Error ? err.message : String(err);
+                sendJson(res, 500, {error: msg});
+            });
     });
+}
+
+function countKeys(extracted: ExtractResult): number {
+    let n = 0;
+    for (const set of extracted.namespaceKeys.values()) n += set.size;
+    return n;
+}
+
+interface CacheHandle {
+    getExtract: () => ExtractResult;
+    clearCache: () => void;
 }
 
 async function handle(
@@ -75,12 +102,19 @@ async function handle(
     res: http.ServerResponse,
     config: Config,
     opts: UiServerOptions,
+    cache: CacheHandle,
 ): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const pathname = url.pathname;
 
     if (req.method === 'GET' && pathname === '/api/state') {
-        sendJson(res, 200, buildState(config, opts));
+        sendJson(res, 200, buildState(config, opts, cache));
+        return;
+    }
+
+    if (req.method === 'POST' && pathname === '/api/refresh') {
+        cache.clearCache();
+        sendJson(res, 200, {ok: true});
         return;
     }
 
@@ -99,8 +133,8 @@ async function handle(
     sendJson(res, 405, {error: `method not allowed: ${req.method} ${pathname}`});
 }
 
-function buildState(config: Config, opts: UiServerOptions): StateResponse {
-    const extracted = extractAll(config);
+function buildState(config: Config, opts: UiServerOptions, cache: CacheHandle): StateResponse {
+    const extracted = cache.getExtract();
 
     const usagesByNs = new Map<string, {file: string; line: number}[]>();
     for (const u of extracted.namespaceUsages) {

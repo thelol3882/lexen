@@ -3,41 +3,59 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Lexen — translator editor</title>
+    <title>Lexen — a translator's editor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..900,0..100;1,9..144,300..900,0..100&family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-<header class="topbar">
-    <div class="brand">
-        <span class="logo">lexen</span>
-        <span class="tag">translator editor</span>
+<div class="paper" aria-hidden="true"></div>
+
+<header class="masthead">
+    <div class="masthead-left">
+        <h1 class="wordmark">Lexen<span class="wordmark-dot">.</span></h1>
+        <p class="dek">A translator's editor <span class="rule">—</span> set in cream &amp; ink</p>
     </div>
-    <div class="controls">
+    <nav class="controls">
         <label class="control">
-            <span>Source</span>
+            <span class="control-label">Source</span>
             <select id="source-locale" disabled></select>
         </label>
+        <span class="control-arrow" aria-hidden="true">⟶</span>
         <label class="control">
-            <span>Target</span>
+            <span class="control-label">Target</span>
             <select id="target-locale"></select>
         </label>
-        <label class="control search">
-            <span>Search</span>
-            <input id="search" type="search" placeholder="key or text…">
+        <label class="control control-search">
+            <span class="control-label">Find</span>
+            <input id="search" type="search" placeholder="key or text fragment…">
         </label>
-        <label class="control toggle">
+        <label class="control control-toggle">
             <input id="missing-only" type="checkbox">
-            <span>Missing only</span>
+            <span class="control-label">Untranslated only</span>
         </label>
-    </div>
+    </nav>
 </header>
 
-<main>
-    <aside id="namespaces" class="rail"></aside>
-    <section id="rows" class="rows">
-        <p class="empty">Loading…</p>
-    </section>
-</main>
+<div class="frame">
+    <aside class="rail">
+        <h2 class="rail-title"><span class="ornament">⁂</span> Namespaces</h2>
+        <ol class="namespaces" id="namespaces"></ol>
+        <p class="rail-foot" id="rail-foot"></p>
+    </aside>
+    <main class="entries" id="rows">
+        <p class="empty"><span class="dropcap">L</span>oading the lexicon&hellip;</p>
+    </main>
+</div>
+
+<footer class="colophon">
+    <span><em>Lexen</em></span>
+    <span class="dot">·</span>
+    <span>edits write back to your locale JSON files</span>
+    <span class="dot">·</span>
+    <span><kbd>⌃</kbd><kbd>C</kbd> to close the press</span>
+</footer>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
