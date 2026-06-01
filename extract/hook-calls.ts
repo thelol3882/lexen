@@ -2,7 +2,7 @@ import ts from 'typescript';
 
 import {resolveStringLiterals} from '../extract-resolver.js';
 import type {AutoPreserved, NamespaceKeys} from '../types.js';
-import {addKeyToNamespaces, callReceiverInfo, getCallReceiverName, isValidKey, templatePrefix} from './ast-utils.js';
+import {addKeyToNamespaces, callReceiverInfo, getCallReceiverName, templatePrefix} from './ast-utils.js';
 
 export const BARE_NAMESPACE = '<<bare>>';
 
