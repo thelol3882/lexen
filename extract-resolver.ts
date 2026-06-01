@@ -5,10 +5,17 @@ import ts from 'typescript';
 
 import type {Config} from './types.js';
 
+/** Module-level cache: the last program built, keyed by resolved tsconfig path. */
+let programCache: {tsconfigPath: string; program: ts.Program} | null = null;
+
 /**
  * Build a shared `ts.Program` once per run from the project's tsconfig. The
  * type-checker resolver needs a program (not a single source file) to walk
  * imports, cross-file symbols, and `paths` aliases.
+ *
+ * When called repeatedly in the same process (e.g. watch mode), passes the
+ * previously-built program as `oldProgram` so TypeScript can reuse unchanged
+ * type information instead of rebuilding from scratch.
  */
 export function buildProgram(config: Config): {program: ts.Program; checker: ts.TypeChecker} {
     const tsconfigPath = locateTsconfig(config);
@@ -30,11 +37,13 @@ export function buildProgram(config: Config): {program: ts.Program; checker: ts.
         throw new Error(`lexen: invalid tsconfig at ${tsconfigPath}: ${msg}`);
     }
 
-    const program = ts.createProgram({
-        rootNames: parsed.fileNames,
-        options: parsed.options,
-        projectReferences: parsed.projectReferences,
-    });
+    // Use the positional overload so we can pass oldProgram for incremental reuse.
+    const host = ts.createCompilerHost(parsed.options);
+    const oldProgram =
+        programCache?.tsconfigPath === tsconfigPath ? programCache.program : undefined;
+    const program = ts.createProgram(parsed.fileNames, parsed.options, host, oldProgram);
+
+    programCache = {tsconfigPath, program};
     return {program, checker: program.getTypeChecker()};
 }
 

@@ -3,6 +3,13 @@ import fs from 'fs';
 import path from 'path';
 import {fileURLToPath} from 'url';
 
+/**
+ * Sentinel returned by `main()` (and propagated from `runExtractOrCheck`) when
+ * a watch-mode watcher was started. The bottom-of-file wrapper must NOT call
+ * `process.exit()` in this case — `fs.watch` keeps the event loop alive.
+ */
+const WATCH_RUNNING = -999;
+
 import {loadConfig} from './config.js';
 import {extractAll} from './extract.js';
 import {sortAll} from './locales.js';
@@ -43,7 +50,7 @@ function printUsage(): void {
     log(`${c.bold}Lexen${c.reset} — config-driven i18n extraction & validation`);
     log('');
     log('Usage:');
-    log(`  ${c.cyan}pnpm lexen extract${c.reset} [feature] [--clean] [--force] [--quiet] [--compare-resolvers]`);
+    log(`  ${c.cyan}pnpm lexen extract${c.reset} [feature] [--clean] [--force] [--quiet] [--watch] [--compare-resolvers]`);
     log(`                                       scan code, add missing keys (and optionally prune unused)`);
     log(`  ${c.cyan}pnpm lexen check${c.reset}   [feature] [--quiet] [--strict] [--format=human|github|json]`);
     log(`                                       CI mode — fail on drift or invalid namespaces`);
@@ -103,6 +110,8 @@ function runExtractOrCheck(
     const force = args.includes('--force');
     const quiet = args.includes('--quiet');
     const strict = checkOnly && args.includes('--strict');
+    // --watch only applies to extract (not check).
+    const watch = !checkOnly && args.includes('--watch');
     const positional = args.filter(a => !a.startsWith('-'));
     // positional[0] is the subcommand; [1] is the optional feature filter.
     const featureFilter = positional[1] ?? getFlagValue(args, '--feature') ?? null;
@@ -120,6 +129,51 @@ function runExtractOrCheck(
 
     if (!checkOnly && args.includes('--compare-resolvers')) {
         return runCompareResolvers(config, featureFilter);
+    }
+
+    if (watch) {
+        // Initial run.
+        runSync(config, {write: true, clean, force, featureFilter, checkOnly: false});
+        log(`\nwatching ${config.absSrcDir} — Ctrl+C to stop`);
+
+        let running = false;
+        let pending = false;
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const triggerRun = (): void => {
+            if (running) {
+                pending = true;
+                return;
+            }
+            running = true;
+            process.stdout.write('\x1Bc'); // clear console
+            try {
+                runSync(config, {write: true, clean, force, featureFilter, checkOnly: false});
+            } finally {
+                running = false;
+            }
+            log(`\nwatching ${config.absSrcDir} — Ctrl+C to stop`);
+            if (pending) {
+                pending = false;
+                // Schedule the pending run on next tick so the call stack unwinds.
+                setImmediate(triggerRun);
+            }
+        };
+
+        fs.watch(config.absSrcDir, {recursive: true}, (_event, _filename) => {
+            if (debounceTimer !== null) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                debounceTimer = null;
+                triggerRun();
+            }, 150);
+        });
+
+        process.on('SIGINT', () => {
+            process.stdout.write('\n');
+            process.exit(0);
+        });
+
+        return WATCH_RUNNING;
     }
 
     const result = runSync(config, {
@@ -267,7 +321,10 @@ function main(): number {
 }
 
 try {
-    process.exit(main());
+    const code = main();
+    // WATCH_RUNNING means a watcher was started — fs.watch keeps the event loop
+    // alive, so we must NOT call process.exit() or the watcher dies immediately.
+    if (code !== WATCH_RUNNING) process.exit(code);
 } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`\n${c.red}Error: ${msg}${c.reset}`);
