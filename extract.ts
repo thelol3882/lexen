@@ -378,8 +378,7 @@ function collectCalleeAliases(
  */
 function parseKeyTemplate(template: string): string[] {
     const tokens: string[] = [];
-    let rest = template;
-    const re = /\$\{(\w+)\}/g;
+    const re = /\$\{(\w+)}/g;
     let last = 0;
     let match: RegExpExecArray | null;
     re.lastIndex = 0;

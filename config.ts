@@ -41,7 +41,7 @@ function discoverGlobalSubNamespaces(raw: RawConfig, absSrcDir: string): Set<str
     if (raw.layout.globalNamespace) out.add(raw.layout.globalNamespace);
     if (!raw.layout.global) return out;
     for (const locale of raw.locales) {
-        const rel = raw.layout.global.replace(/\{locale\}/g, locale);
+        const rel = raw.layout.global.replace(/\{locale}/g, locale);
         const abs = path.join(absSrcDir, rel);
         if (!fs.existsSync(abs)) continue;
         try {
