@@ -14,5 +14,23 @@
     "globalNamespace": "common",
     "featuresDir": "features",
     "widgetsDir": "widgets"
-  }
+  },
+  "calls": [
+    {
+      "callee": ["buildFixtureMeta"],
+      "package": "@test/fixture-seo",
+      "arg": 0,
+      "namespace": {"prop": "namespace", "default": "common"},
+      "keys": ["metadata.${key}.title", "metadata.${key}.description"],
+      "defaults": {"key": "root"}
+    },
+    {
+      "callee": ["buildRootFixtureMeta"],
+      "package": "@test/fixture-seo",
+      "arg": 0,
+      "namespace": {"prop": "namespace", "default": "common"},
+      "keys": ["metadata.${key}.title", "metadata.${key}.description"],
+      "defaults": {"key": "root"}
+    }
+  ]
 }

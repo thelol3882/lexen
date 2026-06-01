@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import type {Config, RawConfig, ResolverConfig, ResolverMode} from './types.js';
+import type {CallExtractorConfig, Config, RawConfig, ResolverConfig, ResolverMode} from './types.js';
 
 const DEFAULT_CONFIG_FILE = 'i18n.config.json';
 
@@ -89,6 +89,76 @@ function validateResolver(resolver: RawConfig['resolver'], configPath: string): 
     }
 }
 
+function validateCalls(calls: unknown, configPath: string): void {
+    if (!Array.isArray(calls)) {
+        throw new Error(`${configPath}: "calls" must be an array`);
+    }
+    for (let i = 0; i < calls.length; i++) {
+        const entry = calls[i] as Partial<CallExtractorConfig>;
+        const pfx = `${configPath}: calls[${i}]`;
+
+        // callee: required, non-empty string or non-empty string[] of non-empty strings
+        if (entry.callee === undefined) {
+            throw new Error(`${pfx}: "callee" is required`);
+        }
+        if (typeof entry.callee === 'string') {
+            if (!entry.callee) throw new Error(`${pfx}: "callee" must be a non-empty string`);
+        } else if (Array.isArray(entry.callee)) {
+            if (entry.callee.length === 0) throw new Error(`${pfx}: "callee" array must not be empty`);
+            for (const c of entry.callee) {
+                if (typeof c !== 'string' || !c) {
+                    throw new Error(`${pfx}: "callee" array entries must be non-empty strings`);
+                }
+            }
+        } else {
+            throw new Error(`${pfx}: "callee" must be a string or array of strings`);
+        }
+
+        // namespace: required object with non-empty string prop
+        if (!entry.namespace || typeof entry.namespace !== 'object' || Array.isArray(entry.namespace)) {
+            throw new Error(`${pfx}: "namespace" must be an object with a "prop" field`);
+        }
+        if (typeof entry.namespace.prop !== 'string' || !entry.namespace.prop) {
+            throw new Error(`${pfx}: "namespace.prop" must be a non-empty string`);
+        }
+        if (entry.namespace.default !== undefined && typeof entry.namespace.default !== 'string') {
+            throw new Error(`${pfx}: "namespace.default" must be a string`);
+        }
+
+        // keys: required non-empty array of non-empty strings
+        if (!Array.isArray(entry.keys) || entry.keys.length === 0) {
+            throw new Error(`${pfx}: "keys" must be a non-empty array`);
+        }
+        for (const k of entry.keys) {
+            if (typeof k !== 'string' || !k) {
+                throw new Error(`${pfx}: "keys" entries must be non-empty strings`);
+            }
+        }
+
+        // package: optional string
+        if (entry.package !== undefined && typeof entry.package !== 'string') {
+            throw new Error(`${pfx}: "package" must be a string`);
+        }
+
+        // arg: optional number
+        if (entry.arg !== undefined && typeof entry.arg !== 'number') {
+            throw new Error(`${pfx}: "arg" must be a number`);
+        }
+
+        // defaults: optional object of string->string
+        if (entry.defaults !== undefined) {
+            if (typeof entry.defaults !== 'object' || Array.isArray(entry.defaults) || entry.defaults === null) {
+                throw new Error(`${pfx}: "defaults" must be an object`);
+            }
+            for (const [, v] of Object.entries(entry.defaults)) {
+                if (typeof v !== 'string') {
+                    throw new Error(`${pfx}: "defaults" values must be strings`);
+                }
+            }
+        }
+    }
+}
+
 function validate(cfg: RawConfig, configPath: string): void {
     const required = ['srcDir', 'locales', 'filePatterns', 'hook', 'layout'] as const;
     for (const key of required) {
@@ -123,6 +193,9 @@ function validate(cfg: RawConfig, configPath: string): void {
     }
     if (cfg.resolver !== undefined) {
         validateResolver(cfg.resolver, configPath);
+    }
+    if (cfg.calls !== undefined) {
+        validateCalls(cfg.calls, configPath);
     }
     if (cfg.preserve !== undefined) {
         if (typeof cfg.preserve !== 'object' || Array.isArray(cfg.preserve) || cfg.preserve === null) {

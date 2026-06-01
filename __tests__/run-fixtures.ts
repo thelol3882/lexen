@@ -68,6 +68,23 @@ const EXPECTED: Expectation[] = [
             'hookReturn.loading',
             // propFlow.tsx — shorthand-property prop resolution
             'shorthand.cancel',
+            // configuredCallUsage.tsx case (b) — buildRootFixtureMeta() uses namespace.default='common'
+            'metadata.root.title',
+            'metadata.root.description',
+        ],
+    },
+    {
+        // configuredCallUsage.tsx cases (a) and (c) — buildFixtureMeta from '@test/fixture-seo'
+        namespace: 'widget.landing',
+        keys: [
+            // case (a): literal key 'root'
+            'metadata.root.title',
+            'metadata.root.description',
+            // case (c): union key 'detail' | 'list' fans out
+            'metadata.detail.title',
+            'metadata.detail.description',
+            'metadata.list.title',
+            'metadata.list.description',
         ],
     },
 ];
@@ -117,7 +134,23 @@ function main(): number {
         console.log('PASS rule4-invariant: hidden keys stayed hidden');
     }
 
-    const totalAssertions = EXPECTED.length + 2;
+    // configuredCalls-localDecl exclusion: localDeclNoExtract.tsx declares
+    // buildFixtureMeta locally (not imported from '@test/fixture-seo'), so the
+    // package filter must prevent it from producing any keys.
+    const localDeclLeaked = [
+        'metadata.localSecret.title',
+        'metadata.localSecret.description',
+    ].filter(k => (namespaceKeys.get('widget.demo') ?? new Set<string>()).has(k));
+    if (localDeclLeaked.length > 0) {
+        // eslint-disable-next-line no-console
+        console.error(`FAIL configuredCalls-localDecl: local declaration unexpectedly produced keys [${localDeclLeaked.join(', ')}]`);
+        failures++;
+    } else {
+        // eslint-disable-next-line no-console
+        console.log('PASS configuredCalls-localDecl: local declaration correctly excluded');
+    }
+
+    const totalAssertions = EXPECTED.length + 3;
     if (failures > 0) {
         // eslint-disable-next-line no-console
         console.error(`\n${failures} fixture assertion(s) failed.`);

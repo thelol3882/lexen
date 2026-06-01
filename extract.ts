@@ -7,6 +7,7 @@ import ts from 'typescript';
 import {buildProgram, resolveStringLiterals} from './extract-resolver.js';
 import type {
     AutoPreserved,
+    CallExtractorConfig,
     Config,
     ExtractOptions,
     ExtractResult,
@@ -120,7 +121,7 @@ interface ExtractCtx {
 function extractFromSourceFile(ctx: ExtractCtx): void {
     const {config, sourceFile, relFile, featureFilter, namespaceKeys, autoPreserved, namespaceUsages, unresolvedCalls, checker, propFlow, hookReturnFlow, hookReturnCache, programSourceFiles} = ctx;
 
-    const recordUnresolved = (call: 'useTranslations' | 't', arg: ts.Node): void => {
+    const recordUnresolved = (call: 'useTranslations' | 't' | 'call', arg: ts.Node): void => {
         const {line, character} = ts.getLineAndCharacterOfPosition(sourceFile, arg.getStart(sourceFile));
         const raw = arg.getText(sourceFile);
         const snippet = raw.length > 80 ? raw.slice(0, 77) + '...' : raw;
@@ -137,10 +138,20 @@ function extractFromSourceFile(ctx: ExtractCtx): void {
     const hookPackage = config.hook.package;
 
     const hookAliases = collectHookAliases(sourceFile, hookName, hookPackage);
+
+    // Collect aliases for every configured call extractor. Each callee name (or
+    // array of names) may be imported under a different local alias.
+    const configuredCallAliases = (config.calls ?? []).map(callCfg =>
+        collectCalleeAliases(sourceFile, callCfg),
+    );
+    const hasConfiguredCallAliases = configuredCallAliases.some(a => a.size > 0);
+
     // Files with no direct hook import may still destructure translators from a
     // custom hook (e.g. `const {t} = useGroupPlayersTable()`). In typechecker
     // mode keep walking so the hook-return resolver can pick those up.
-    if (hookAliases.size === 0 && !propFlow && !hookReturnFlow) return;
+    // Also keep walking when the file imports a configured callee — route pages
+    // import buildMetadata but often not useTranslations.
+    if (hookAliases.size === 0 && !propFlow && !hookReturnFlow && !hasConfiguredCallAliases) return;
 
     // First pass collects variable bindings; second pass collects `t('key')`
     // calls. Two passes because a file may call `t(...)` before its
@@ -245,6 +256,28 @@ function extractFromSourceFile(ctx: ExtractCtx): void {
         });
     }
 
+    // Run configured-call extraction even when there are no hook bindings in
+    // this file — route page.tsx files import buildMetadata but not useTranslations.
+    if (hasConfiguredCallAliases) {
+        for (let i = 0; i < (config.calls ?? []).length; i++) {
+            const callCfg = config.calls![i];
+            const aliases = configuredCallAliases[i];
+            if (aliases.size === 0) continue;
+            collectConfiguredCalls(
+                sourceFile,
+                callCfg,
+                aliases,
+                featureFilter,
+                namespaceKeys,
+                namespaceUsages,
+                unresolvedCalls,
+                checker,
+                relFile,
+                recordUnresolved,
+            );
+        }
+    }
+
     if (varToNamespaces.size === 0 && symToNamespaces.size === 0) return;
 
     const collectKeys = (node: ts.Node): void => {
@@ -293,6 +326,261 @@ function collectHookAliases(
     }
 
     return aliases;
+}
+
+/**
+ * Collect all local aliases for the callee name(s) in the given call-extractor
+ * config. Mirrors `collectHookAliases` but accepts multiple names and an
+ * optional package filter from `CallExtractorConfig`.
+ */
+function collectCalleeAliases(
+    sourceFile: ts.SourceFile,
+    callCfg: CallExtractorConfig,
+): Set<string> {
+    const names = new Set(
+        Array.isArray(callCfg.callee) ? callCfg.callee : [callCfg.callee],
+    );
+    const pkg = callCfg.package;
+    const aliases = new Set<string>();
+
+    for (const stmt of sourceFile.statements) {
+        if (!ts.isImportDeclaration(stmt)) continue;
+        if (!stmt.importClause) continue;
+
+        const moduleSpec = stmt.moduleSpecifier;
+        if (pkg && ts.isStringLiteral(moduleSpec) && moduleSpec.text !== pkg) {
+            continue;
+        }
+
+        const named = stmt.importClause.namedBindings;
+        if (named && ts.isNamedImports(named)) {
+            for (const element of named.elements) {
+                const original = element.propertyName
+                    ? element.propertyName.text
+                    : element.name.text;
+                if (names.has(original)) {
+                    aliases.add(element.name.text);
+                }
+            }
+        }
+    }
+
+    return aliases;
+}
+
+/**
+ * Parse a key template like `"metadata.${key}.title"` into alternating literal
+ * segments and hole prop-names. Returns an array of tokens where even indices
+ * are literal strings and odd indices are prop names.
+ *
+ *   parseKeyTemplate('metadata.${key}.title')
+ *   → ['metadata.', 'key', '.title']
+ */
+function parseKeyTemplate(template: string): string[] {
+    const tokens: string[] = [];
+    let rest = template;
+    const re = /\$\{(\w+)\}/g;
+    let last = 0;
+    let match: RegExpExecArray | null;
+    re.lastIndex = 0;
+    while ((match = re.exec(template)) !== null) {
+        tokens.push(template.slice(last, match.index)); // literal before hole
+        tokens.push(match[1]); // hole prop name
+        last = match.index + match[0].length;
+    }
+    tokens.push(template.slice(last)); // trailing literal
+    return tokens;
+}
+
+/**
+ * Walk call expressions in `sourceFile` looking for calls whose callee is in
+ * `aliases` and whose arg at `callCfg.arg` is an object literal. Resolve the
+ * namespace and key-template holes via `resolveStringLiterals`, cartesian-expand
+ * across all holes, and feed the results to `addKeyToNamespaces`.
+ */
+function collectConfiguredCalls(
+    sourceFile: ts.SourceFile,
+    callCfg: CallExtractorConfig,
+    aliases: Set<string>,
+    featureFilter: string | null,
+    namespaceKeys: NamespaceKeys,
+    namespaceUsages: UsageRecord[],
+    unresolvedCalls: UnresolvedCall[],
+    checker: ts.TypeChecker | null,
+    relFile: string,
+    recordUnresolved: (call: 'call', arg: ts.Node) => void,
+): void {
+    const argIndex = callCfg.arg ?? 0;
+
+    const recordUsageLocal = (namespaces: string[], node: ts.Node): void => {
+        const {line, character} = ts.getLineAndCharacterOfPosition(sourceFile, node.getStart(sourceFile));
+        for (const ns of namespaces) {
+            namespaceUsages.push({namespace: ns, file: relFile, line: line + 1, column: character + 1});
+        }
+    };
+
+    const visit = (node: ts.Node): void => {
+        if (ts.isCallExpression(node)) {
+            const name = getCallReceiverName(node);
+            if (name && aliases.has(name)) {
+                processConfiguredCall(node);
+            }
+        }
+        ts.forEachChild(node, visit);
+    };
+
+    const processConfiguredCall = (node: ts.CallExpression): void => {
+        // Resolve the object-literal argument.
+        const rawArg = node.arguments[argIndex];
+        const objLit = rawArg && ts.isObjectLiteralExpression(rawArg) ? rawArg : null;
+
+        // --- Resolve namespace ---
+        let resolvedNamespaces: string[];
+
+        if (objLit) {
+            const nsExpr = findPropertyValue(objLit, callCfg.namespace.prop);
+            if (nsExpr) {
+                // Try to resolve the property value.
+                const nsValues = resolvePropertyValue(nsExpr, checker);
+                if (nsValues !== null && nsValues.length > 0) {
+                    resolvedNamespaces = nsValues;
+                } else {
+                    // Can't resolve — record unresolved and bail.
+                    recordUnresolved('call', nsExpr);
+                    return;
+                }
+            } else if (callCfg.namespace.default !== undefined) {
+                // Property absent, use default.
+                resolvedNamespaces = [callCfg.namespace.default];
+            } else {
+                // No property, no default — unresolved.
+                recordUnresolved('call', rawArg ?? node);
+                return;
+            }
+        } else if (callCfg.namespace.default !== undefined) {
+            // No object arg at all — use namespace default (e.g. buildRootMetadata()).
+            resolvedNamespaces = [callCfg.namespace.default];
+        } else {
+            // No arg and no default.
+            recordUnresolved('call', node);
+            return;
+        }
+
+        // Apply featureFilter — same semantics as collectTranslationCall.
+        const matchingNamespaces = resolvedNamespaces.filter(
+            ns => !featureFilter || ns === featureFilter || ns === 'common',
+        );
+        if (matchingNamespaces.length === 0) return;
+
+        // Push namespace usages so validate can catch invalid namespaces.
+        recordUsageLocal(matchingNamespaces, node);
+
+        // --- Resolve each key template ---
+        for (const keyTemplate of callCfg.keys) {
+            const tokens = parseKeyTemplate(keyTemplate);
+            // Collect hole values: tokens at odd positions are prop names.
+            // tokens = [lit0, prop0, lit1, prop1, lit2, ...]
+            // We build a list of arrays: [[lit0], [values for prop0], [lit1], ...]
+            const parts: string[][] = [];
+            let allResolved = true;
+            let unresolvableNode: ts.Node = node;
+
+            for (let ti = 0; ti < tokens.length; ti++) {
+                if (ti % 2 === 0) {
+                    // Literal segment.
+                    parts.push([tokens[ti]]);
+                } else {
+                    // Hole: resolve from object arg property or defaults.
+                    const propName = tokens[ti];
+                    let holeValues: string[] | null = null;
+
+                    if (objLit) {
+                        const holeExpr = findPropertyValue(objLit, propName);
+                        if (holeExpr) {
+                            holeValues = resolvePropertyValue(holeExpr, checker);
+                            if (holeValues === null) {
+                                // Resolver returned null (widened to string) — unresolved.
+                                unresolvableNode = holeExpr;
+                                allResolved = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (holeValues === null) {
+                        // Property absent — try defaults.
+                        const def = callCfg.defaults?.[propName];
+                        if (def !== undefined) {
+                            holeValues = [def];
+                        } else {
+                            // No property and no default — unresolved.
+                            unresolvableNode = rawArg ?? node;
+                            allResolved = false;
+                            break;
+                        }
+                    }
+
+                    parts.push(holeValues);
+                }
+            }
+
+            if (!allResolved) {
+                recordUnresolved('call', unresolvableNode);
+                continue;
+            }
+
+            // Cartesian product across all parts.
+            let combined: string[] = [''];
+            for (const options of parts) {
+                const next: string[] = [];
+                for (const base of combined) {
+                    for (const opt of options) next.push(base + opt);
+                }
+                combined = next;
+            }
+
+            for (const key of combined) {
+                addKeyToNamespaces(key, matchingNamespaces, namespaceKeys);
+            }
+        }
+    };
+
+    visit(sourceFile);
+}
+
+/**
+ * Find a property (assignment or shorthand) with the given name in an object literal.
+ * Returns the initializer expression for use with `resolvePropertyValue`.
+ */
+function findPropertyValue(
+    obj: ts.ObjectLiteralExpression,
+    name: string,
+): ts.Expression | null {
+    for (const prop of obj.properties) {
+        if (!prop.name || !ts.isIdentifier(prop.name) || prop.name.text !== name) continue;
+        if (ts.isPropertyAssignment(prop)) {
+            return prop.initializer;
+        }
+        if (ts.isShorthandPropertyAssignment(prop)) {
+            // Shorthand `{key}` — the name itself is the expression.
+            return prop.name;
+        }
+    }
+    return null;
+}
+
+/** Resolve a property initializer expression to string literals. */
+function resolvePropertyValue(
+    expr: ts.Expression,
+    checker: ts.TypeChecker | null,
+): string[] | null {
+    if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {
+        return [expr.text];
+    }
+    if (checker) {
+        return resolveStringLiterals(expr, checker);
+    }
+    return null;
 }
 
 function callToNamespaces(

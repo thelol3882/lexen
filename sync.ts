@@ -63,14 +63,18 @@ export function runSync(
             seen.add(key);
             return true;
         });
-        const argCount = deduped.filter(u => u.call !== 'propFlow').length;
+        const argCount = deduped.filter(u => u.call !== 'propFlow' && u.call !== 'call').length;
         const propCount = deduped.filter(u => u.call === 'propFlow').length;
+        const callCount = deduped.filter(u => u.call === 'call').length;
         log(`\n${c.yellow}${c.bold}Unresolved translation call sites (${deduped.length}):${c.reset}`);
         if (argCount > 0) {
             log(`${c.dim}  ${argCount} ${config.hook.name}/t arg(s) — RULES rule 1/3/6 (non-literal namespace, broad \`string\` type, or runtime value). Keys hidden.${c.reset}`);
         }
         if (propCount > 0) {
             log(`${c.dim}  ${propCount} t-prop caller(s) — RULES rule 4 (t passed as prop, source not traceable to useTranslations). Keys inside the receiving component hidden.${c.reset}`);
+        }
+        if (callCount > 0) {
+            log(`${c.dim}  ${callCount} configured call(s) — namespace or key prop couldn't be resolved statically. Add a "defaults" entry in calls config or fix the call site.${c.reset}`);
         }
         for (const u of deduped.slice(0, cap)) {
             const tag = u.call === 'propFlow' ? 'rule4' : u.call;

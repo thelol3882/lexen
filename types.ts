@@ -14,6 +14,39 @@ export interface HookConfig {
 }
 
 /**
+ * Descriptor for a builder function that reads translation keys directly from
+ * the message tree (e.g. `buildMetadata({namespace, key})`). Lexen will
+ * collect aliases for the callee names, resolve the namespace and key-template
+ * holes via `resolveStringLiterals`, and feed the results to `addKeyToNamespaces`.
+ */
+export interface CallExtractorConfig {
+    /** Function name(s) to match at call sites. */
+    callee: string | string[];
+    /**
+     * Optional import-source filter. When set, only call sites whose callee
+     * was imported from this module specifier are matched (mirrors `hook.package`).
+     */
+    package?: string;
+    /** Index of the object-literal argument (default 0). */
+    arg?: number;
+    /**
+     * How to extract the namespace from the object argument.
+     * `prop` is the property name; `default` is used when the prop is absent.
+     */
+    namespace: {
+        prop: string;
+        default?: string;
+    };
+    /**
+     * Key templates. `${propName}` holes are filled from the object argument's
+     * properties via `resolveStringLiterals`, cartesian-expanded across all holes.
+     */
+    keys: string[];
+    /** Literal fallbacks for props absent at a given call site. */
+    defaults?: Record<string, string>;
+}
+
+/**
  * Preserve keys lexen's static analysis can't see, keyed by namespace.
  *
  *   "*"                → preserve every key under that namespace
@@ -55,6 +88,8 @@ export interface RawConfig {
     preserve?: PreserveConfig;
     /** String shorthand ("ast" | "typechecker") or object with sub-flags. Defaults to "ast". */
     resolver?: ResolverMode | ResolverConfig;
+    /** Config-driven call extractors for builder functions (e.g. `buildMetadata`). */
+    calls?: CallExtractorConfig[];
 }
 
 export interface Config extends RawConfig {
@@ -102,8 +137,10 @@ export interface UnresolvedCall extends UsageRecord {
      *  - "propFlow" — a component receives `t` as a prop and a caller passes
      *    an expression whose namespace can't be traced back to
      *    `useTranslations(...)` (RULES rule 4).
+     *  - "call" — a configured call-extractor (`calls[].callee`) whose
+     *    namespace or key prop couldn't be statically resolved.
      */
-    call: 'useTranslations' | 't' | 'propFlow';
+    call: 'useTranslations' | 't' | 'propFlow' | 'call';
     /** Short human-readable source snippet of the offending argument. */
     snippet: string;
 }
