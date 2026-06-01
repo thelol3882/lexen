@@ -1,5 +1,5 @@
 {
-  "$schema": "./node_modules/@thelol3882/lexen/schema/i18n.config.schema.json",
+  "$schema": "https://cdn.jsdelivr.net/npm/@thelol3882/lexen/schema/i18n.config.schema.json",
   "srcDir": "src",
   "locales": ["en"],
   "defaultLocale": "en",

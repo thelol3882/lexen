@@ -119,11 +119,14 @@ Add the `$schema` field to get IDE validation and autocomplete for `i18n.config.
 
 ```json
 {
-  "$schema": "./node_modules/@thelol3882/lexen/schema/i18n.config.schema.json"
+  "$schema": "https://cdn.jsdelivr.net/npm/@thelol3882/lexen/schema/i18n.config.schema.json"
 }
 ```
 
-`lexen init` scaffolds this line automatically (all presets include it).
+`lexen init` scaffolds this line automatically (all presets include it). The CDN
+URL resolves in any editor without depending on your install layout; if you
+prefer an offline path, point it at
+`./node_modules/@thelol3882/lexen/schema/i18n.config.schema.json` instead.
 
 ### Custom call extractors (`calls`)
 
@@ -131,16 +134,22 @@ Builder functions that read from the message tree (e.g. `buildMetadata({namespac
 can be taught to lexen via the `calls` array:
 
 ```json
-"calls": [
-  {
-    "callee": "buildMetadata",
-    "package": "@/utils/meta",
-    "namespace": {"prop": "namespace", "default": "common"},
-    "keys": ["{key}"],
-    "defaults": {"key": "title"}
-  }
-]
+{
+  "calls": [
+    {
+      "callee": ["buildMetadata", "buildPrivateMetadata", "buildRootMetadata"],
+      "package": "@/shared/seo",
+      "namespace": {"prop": "namespace", "default": "common"},
+      "keys": ["metadata.${key}.title", "metadata.${key}.description"],
+      "defaults": {"key": "root"}
+    }
+  ]
+}
 ```
+
+Each `${prop}` hole in a `keys` template is resolved from the call's object
+argument (literal or typed-union), so `buildMetadata({namespace: 'widget.x', key: 'detail'})`
+yields `widget.x` → `metadata.detail.title` + `metadata.detail.description`.
 
 - `callee` — function name (or array of names) to match at call sites.
 - `package` — optional import-source filter; only matches calls where the callee was imported from this module (mirrors `hook.package`).
@@ -284,8 +293,8 @@ Symptom: `lexen check` passes ("all synced"), but the runtime throws `MISSING_ME
 1. **Resolve the label at the call site, store the result, not the key.** Usually the cleanest refactor:
    ```tsx
    const stats = [
-       {label: t('stats.totalCarwashes'), value: ...},
-       {label: t('stats.totalBookings'), value: ...},
+       {label: t('stats.totalCarwashes'), value: carwashes},
+       {label: t('stats.totalBookings'), value: bookings},
    ];
    return stats.map(s => <Text>{s.label}</Text>);
    ```
@@ -301,10 +310,12 @@ Symptom: `lexen check` passes ("all synced"), but the runtime throws `MISSING_ME
 
 4. **`preserve` config directive** — declare dynamic namespaces/prefixes explicitly in `i18n.config.json` (for truly-runtime cases: `t(fn())`, `t(api.x())`, etc. that even the typechecker can't resolve):
    ```json
-   "preserve": {
-     "navigation": "*",
-     "widget.dashboard": ["academyStats.*", "ownerStats.*", "quickActions.*"],
-     "widget.finance": ["expenses.*"]
+   {
+     "preserve": {
+       "navigation": "*",
+       "widget.dashboard": ["academyStats.*", "ownerStats.*", "quickActions.*"],
+       "widget.finance": ["expenses.*"]
+     }
    }
    ```
    - `"*"` — preserve every key under that namespace (for fully-dynamic cases like nav labels resolved via config array).

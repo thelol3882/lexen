@@ -95,7 +95,9 @@ const stats = [
     {labelKey: 'stats.totalCoaches', value: 7},
 ];
 return stats.map(s => <Text>{t(s.labelKey)}</Text>);
+```
 
+```tsx
 // ✅ Preferred — call t() immediately, store the result
 const stats = [
     {label: t('stats.totalPlayers'), value: 42},
