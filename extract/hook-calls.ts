@@ -45,6 +45,10 @@ export function collectTranslationCall(
     autoPreserved: AutoPreserved,
     checker: ts.TypeChecker | null,
     onUnresolved?: (arg: ts.Node, namespaces: string[]) => void,
+    /** Keys resolved from a dynamic hole (union/template/numeric) rather than a
+     *  plain literal. They must mirror runtime values, so naming rules (rule 7)
+     *  exempt them. */
+    dynamicKeys?: NamespaceKeys,
 ): void {
     if (node.arguments.length < 1) return;
 
@@ -104,6 +108,7 @@ export function collectTranslationCall(
         if (resolved) {
             for (const key of resolved) {
                 addKeyToNamespaces(key, matchingNamespaces, namespaceKeys);
+                if (dynamicKeys) addKeyToNamespaces(key, matchingNamespaces, dynamicKeys);
             }
             return;
         }

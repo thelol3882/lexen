@@ -134,6 +134,9 @@ function resolveTemplateExpression(
 
 function literalsFromType(type: ts.Type): string[] | null {
     if (type.isStringLiteral()) return [type.value];
+    // Number-literal types stringify exactly as template interpolation does at
+    // runtime (`` `level_${2}` `` → "level_2"), so `t(`x.${n as 1 | 2}`)` resolves.
+    if (type.isNumberLiteral()) return [String(type.value)];
 
     if (type.isUnion()) {
         const out: string[] = [];
@@ -142,9 +145,13 @@ function literalsFromType(type: ts.Type): string[] | null {
                 out.push(member.value);
                 continue;
             }
+            if (member.isNumberLiteral()) {
+                out.push(String(member.value));
+                continue;
+            }
             // Skip undefined/null members — they can't produce a key at runtime.
             if (member.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)) continue;
-            // General `string`, numeric, etc. → bail.
+            // General `string`, non-literal numeric, etc. → bail.
             return null;
         }
         return out.length > 0 ? dedupe(out) : null;

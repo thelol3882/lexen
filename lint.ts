@@ -38,7 +38,7 @@ export function collectRuleViolations(
     featureFilter: string | null,
     naming: boolean = false,
 ): RuleViolation[] {
-    const {namespaceKeys, namespaceUsages, unresolvedCalls} = extractAll(config, {featureFilter});
+    const {namespaceKeys, namespaceUsages, unresolvedCalls, dynamicKeys} = extractAll(config, {featureFilter});
 
     // ── Unresolved calls ──────────────────────────────────────────────────────
     // Apply the same feature-scoping as sync.ts.
@@ -133,7 +133,12 @@ export function collectRuleViolations(
     if (naming) {
         const camelCaseSegment = /^[a-z][a-zA-Z0-9]*$/;
         for (const [namespace, keys] of namespaceKeys.entries()) {
+            // Keys resolved from a dynamic hole mirror runtime values (API enums,
+            // numeric tiers, etc.); their casing isn't the developer's to choose,
+            // so exempt them — only hand-authored static literals are checked.
+            const dynamicForNs = dynamicKeys.get(namespace);
             for (const key of keys) {
+                if (dynamicForNs?.has(key)) continue;
                 const segments = key.split('.');
                 const badSegment = segments.find(seg => !camelCaseSegment.test(seg));
                 if (badSegment !== undefined) {

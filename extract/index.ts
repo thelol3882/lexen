@@ -33,6 +33,7 @@ interface ExtractCtx {
     autoPreserved: AutoPreserved;
     namespaceUsages: UsageRecord[];
     unresolvedCalls: UnresolvedCall[];
+    dynamicKeys: NamespaceKeys;
     checker: ts.TypeChecker | null;
     propFlow: boolean;
     /** Track `const {t} = someHook()` patterns by walking someHook's body. */
@@ -50,6 +51,7 @@ export function extractAll(config: Config, options: ExtractOptions = {}): Extrac
     const autoPreserved: AutoPreserved = new Map();
     const namespaceUsages: UsageRecord[] = [];
     const unresolvedCalls: UnresolvedCall[] = [];
+    const dynamicKeys: NamespaceKeys = new Map();
 
     let checker: ts.TypeChecker | null = null;
     const sourceFiles: {relFile: string; sourceFile: ts.SourceFile}[] = [];
@@ -106,6 +108,7 @@ export function extractAll(config: Config, options: ExtractOptions = {}): Extrac
             autoPreserved,
             namespaceUsages,
             unresolvedCalls,
+            dynamicKeys,
             checker,
             propFlow: mode === 'typechecker' && config.resolverResolved.propFlow,
             hookReturnFlow: mode === 'typechecker',
@@ -114,11 +117,11 @@ export function extractAll(config: Config, options: ExtractOptions = {}): Extrac
         });
     }
 
-    return {namespaceKeys, autoPreserved, namespaceUsages, unresolvedCalls};
+    return {namespaceKeys, autoPreserved, namespaceUsages, unresolvedCalls, dynamicKeys};
 }
 
 function extractFromSourceFile(ctx: ExtractCtx): void {
-    const {config, sourceFile, relFile, featureFilter, namespaceKeys, autoPreserved, namespaceUsages, unresolvedCalls, checker, propFlow, hookReturnFlow, hookReturnCache, programSourceFiles} = ctx;
+    const {config, sourceFile, relFile, featureFilter, namespaceKeys, autoPreserved, namespaceUsages, unresolvedCalls, dynamicKeys, checker, propFlow, hookReturnFlow, hookReturnCache, programSourceFiles} = ctx;
 
     const recordUnresolved = (call: 'useTranslations' | 't' | 'call', arg: ts.Node, namespaces?: string[]): void => {
         const {line, character} = ts.getLineAndCharacterOfPosition(sourceFile, arg.getStart(sourceFile));
@@ -292,6 +295,7 @@ function extractFromSourceFile(ctx: ExtractCtx): void {
                 autoPreserved,
                 checker,
                 (arg, namespaces) => recordUnresolved('t', arg, namespaces),
+                dynamicKeys,
             );
         }
         ts.forEachChild(node, collectKeys);

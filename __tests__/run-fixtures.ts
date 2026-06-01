@@ -38,6 +38,12 @@ const EXPECTED: Expectation[] = [
             'roles.owner',
             'nav.home',
             'nav.settings',
+            // usage.tsx Pattern E — number-literal union hole (1 | 2 | 3)
+            'level_1',
+            'level_2',
+            'level_3',
+            // usage.tsx Pattern F — hand-authored snake_case literal
+            'bad_key',
             // hookReturn.tsx — via useDemoTable() hook-return resolution
             'hookReturn.title',
             'hookReturn.renamed',
@@ -247,7 +253,27 @@ function main(): number {
         }
     }
 
-    const totalAssertions = EXPECTED.length + 5 + 4;
+    // Rule 7 (naming) provenance: a hand-authored snake_case literal ('bad_key')
+    // is flagged, but a key resolved from a dynamic hole ('level_1') is exempt.
+    {
+        const naming = collectRuleViolations(config, null, true).filter(v => v.rule === 7);
+        const flagsBadKey = naming.some(v => v.snippet.endsWith('› bad_key'));
+        const flagsLevel = naming.some(v => v.snippet.includes('level_'));
+        if (!flagsBadKey) {
+            // eslint-disable-next-line no-console
+            console.error('FAIL rule7-static: expected rule 7 to flag hand-authored snake_case key "bad_key"');
+            failures++;
+        } else if (flagsLevel) {
+            // eslint-disable-next-line no-console
+            console.error('FAIL rule7-dynamic-exempt: dynamic-hole key "level_N" should be exempt from rule 7');
+            failures++;
+        } else {
+            // eslint-disable-next-line no-console
+            console.log('PASS rule7-provenance: snake_case literal flagged, dynamic-hole key exempt');
+        }
+    }
+
+    const totalAssertions = EXPECTED.length + 5 + 4 + 1;
     if (failures > 0) {
         // eslint-disable-next-line no-console
         console.error(`\n${failures} fixture assertion(s) failed.`);

@@ -40,3 +40,18 @@ export function MapArray() {
     const t = useTranslations('demo');
     return ITEMS.map(item => t(item.labelKey));
 }
+
+// -- Pattern E: template literal with a NUMBER-literal union hole
+// expect: demo.level_1, demo.level_2, demo.level_3
+// rule 7: these are dynamic-hole keys — EXEMPT from the camelCase naming check.
+export function NumericUnion({tier}: {tier: 1 | 2 | 3}) {
+    const t = useTranslations('demo');
+    return t(`level_${tier}`);
+}
+
+// -- Pattern F: hand-authored snake_case literal — rule 7 SHOULD flag this.
+// expect: demo.bad_key
+export function SnakeLiteral() {
+    const t = useTranslations('demo');
+    return t('bad_key');
+}

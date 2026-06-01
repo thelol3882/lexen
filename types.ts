@@ -158,6 +158,13 @@ export interface ExtractResult {
     autoPreserved: AutoPreserved;
     namespaceUsages: UsageRecord[];
     unresolvedCalls: UnresolvedCall[];
+    /**
+     * Subset of `namespaceKeys` whose keys were resolved from a dynamic hole
+     * (string/number-literal union, template, property access) rather than a
+     * plain `t('literal')`. These mirror runtime values (API enums, etc.), so
+     * the naming check (rule 7) exempts them.
+     */
+    dynamicKeys: NamespaceKeys;
 }
 
 export interface ExtractOptions {
