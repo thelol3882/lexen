@@ -7,7 +7,9 @@ import {loadConfig} from './config.js';
 import {extractAll} from './extract.js';
 import {sortAll} from './locales.js';
 import {runSync} from './sync.js';
-import {c, log} from './util/log.js';
+import {collectRuleViolations, runLint} from './lint.js';
+import {parseFormat, renderGithubReport, renderGithubViolations, renderJsonReport, renderJsonViolations} from './reporters.js';
+import {c, log, setQuiet, setSilent} from './util/log.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,7 +17,7 @@ const __dirname = path.dirname(__filename);
 const PRESETS_DIR = path.join(__dirname, 'presets');
 const DEFAULT_PRESET = 'next-intl';
 
-const SUBCOMMANDS = ['extract', 'check', 'sort', 'init'] as const;
+const SUBCOMMANDS = ['extract', 'check', 'sort', 'init', 'lint'] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function listPresets(): string[] {
@@ -41,13 +43,16 @@ function printUsage(): void {
     log(`${c.bold}Lexen${c.reset} — config-driven i18n extraction & validation`);
     log('');
     log('Usage:');
-    log(`  ${c.cyan}pnpm lexen extract${c.reset} [feature] [--clean] [--compare-resolvers]`);
+    log(`  ${c.cyan}pnpm lexen extract${c.reset} [feature] [--clean] [--force] [--quiet] [--compare-resolvers]`);
     log(`                                       scan code, add missing keys (and optionally prune unused)`);
-    log(`  ${c.cyan}pnpm lexen check${c.reset}   [feature]              CI mode — fail on drift or invalid namespaces`);
+    log(`  ${c.cyan}pnpm lexen check${c.reset}   [feature] [--quiet] [--strict] [--format=human|github|json]`);
+    log(`                                       CI mode — fail on drift or invalid namespaces`);
+    log(`  ${c.cyan}pnpm lexen lint${c.reset}    [feature] [--naming] [--format=human|github|json]`);
+    log(`                                       rules-violation diagnostics (file:line + fix hint)`);
     log(`  ${c.cyan}pnpm lexen sort${c.reset}                            normalize key order in every locale file`);
     log(`  ${c.cyan}pnpm lexen init${c.reset}    [--preset=<name>] [--force]  scaffold i18n.config.json`);
     log('');
-    log(`Exit codes: ${c.dim}0 ok · 1 drift · 2 invalid namespace · 3 config/usage error${c.reset}`);
+    log(`Exit codes: ${c.dim}0 ok · 1 drift/violations · 2 invalid namespace · 3 config/usage error${c.reset}`);
 }
 
 function runInit(args: string[], projectRoot: string): number {
@@ -95,23 +100,64 @@ function runExtractOrCheck(
     {checkOnly}: {checkOnly: boolean},
 ): number {
     const clean = args.includes('--clean');
+    const force = args.includes('--force');
+    const quiet = args.includes('--quiet');
+    const strict = checkOnly && args.includes('--strict');
     const positional = args.filter(a => !a.startsWith('-'));
     // positional[0] is the subcommand; [1] is the optional feature filter.
     const featureFilter = positional[1] ?? getFlagValue(args, '--feature') ?? null;
 
     const config = loadConfig(projectRoot);
 
+    const format = parseFormat(args);
+
+    // For non-human formats suppress ALL inline logs so only the machine output is emitted.
+    if (format !== 'human') {
+        setSilent(true);
+    } else {
+        setQuiet(quiet);
+    }
+
     if (!checkOnly && args.includes('--compare-resolvers')) {
         return runCompareResolvers(config, featureFilter);
     }
 
-    const {code} = runSync(config, {
+    const result = runSync(config, {
         write: !checkOnly,
         clean,
+        force,
         featureFilter,
         checkOnly,
     });
-    return code;
+
+    // Non-human output: render the report via the chosen formatter.
+    if (format !== 'human' && result.report) {
+        if (format === 'github') {
+            renderGithubReport(result.report);
+        } else {
+            renderJsonReport(result.report);
+        }
+    }
+
+    let exitCode = result.code;
+
+    // --strict: also run lint and fold violations into the result.
+    if (strict && exitCode === 0) {
+        const violations = collectRuleViolations(config, featureFilter);
+        if (violations.length > 0) {
+            if (format === 'github') {
+                renderGithubViolations(violations);
+            } else if (format === 'json') {
+                renderJsonViolations(violations);
+            } else {
+                // Human: run the full lint renderer (prints grouped report).
+                runLint(config, featureFilter, 'human');
+            }
+            exitCode = 1;
+        }
+    }
+
+    return exitCode;
 }
 
 function runCompareResolvers(
@@ -210,6 +256,13 @@ function main(): number {
             return runExtractOrCheck(args, projectRoot, {checkOnly: false});
         case 'check':
             return runExtractOrCheck(args, projectRoot, {checkOnly: true});
+        case 'lint': {
+            const format = parseFormat(args);
+            const naming = args.includes('--naming');
+            const positional = args.filter(a => !a.startsWith('-'));
+            const featureFilter = positional[1] ?? getFlagValue(args, '--feature') ?? null;
+            return runLint(loadConfig(projectRoot), featureFilter, format, naming);
+        }
     }
 }
 

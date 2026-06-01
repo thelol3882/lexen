@@ -121,18 +121,20 @@ interface ExtractCtx {
 function extractFromSourceFile(ctx: ExtractCtx): void {
     const {config, sourceFile, relFile, featureFilter, namespaceKeys, autoPreserved, namespaceUsages, unresolvedCalls, checker, propFlow, hookReturnFlow, hookReturnCache, programSourceFiles} = ctx;
 
-    const recordUnresolved = (call: 'useTranslations' | 't' | 'call', arg: ts.Node): void => {
+    const recordUnresolved = (call: 'useTranslations' | 't' | 'call', arg: ts.Node, namespaces?: string[]): void => {
         const {line, character} = ts.getLineAndCharacterOfPosition(sourceFile, arg.getStart(sourceFile));
         const raw = arg.getText(sourceFile);
         const snippet = raw.length > 80 ? raw.slice(0, 77) + '...' : raw;
-        unresolvedCalls.push({
+        const entry: UnresolvedCall = {
             call,
             namespace: '<unresolved>',
             file: relFile,
             line: line + 1,
             column: character + 1,
             snippet,
-        });
+        };
+        if (namespaces !== undefined) entry.namespaces = namespaces;
+        unresolvedCalls.push(entry);
     };
     const hookName = config.hook.name;
     const hookPackage = config.hook.package;
@@ -290,7 +292,7 @@ function extractFromSourceFile(ctx: ExtractCtx): void {
                 namespaceKeys,
                 autoPreserved,
                 checker,
-                (arg) => recordUnresolved('t', arg),
+                (arg, namespaces) => recordUnresolved('t', arg, namespaces),
             );
         }
         ts.forEachChild(node, collectKeys);
@@ -657,7 +659,7 @@ function collectTranslationCall(
     namespaceKeys: NamespaceKeys,
     autoPreserved: AutoPreserved,
     checker: ts.TypeChecker | null,
-    onUnresolved?: (arg: ts.Node) => void,
+    onUnresolved?: (arg: ts.Node, namespaces: string[]) => void,
 ): void {
     if (node.arguments.length < 1) return;
 
@@ -723,7 +725,7 @@ function collectTranslationCall(
     }
     // Non-literal arg the resolver couldn't see through (RULES.md rule 6).
     // AST-mode also lands here for any non-literal arg — invisible by design.
-    if (onUnresolved) onUnresolved(arg);
+    if (onUnresolved) onUnresolved(arg, matchingNamespaces);
 }
 
 function addKeyToNamespaces(key: string, namespaces: string[], namespaceKeys: NamespaceKeys): void {

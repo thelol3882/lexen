@@ -7,3 +7,6 @@ const root = path.resolve(__dirname, '..');
 
 cpSync(path.join(root, 'presets'), path.join(root, 'dist', 'presets'), {recursive: true});
 console.log('Copied presets/ → dist/presets/');
+
+cpSync(path.join(root, 'schema'), path.join(root, 'dist', 'schema'), {recursive: true});
+console.log('Copied schema/ → dist/schema/');

@@ -8,8 +8,8 @@ import {
     setNestedValue,
     writeNamespace,
 } from './locales.js';
-import type {Config, SyncOptions, SyncResult} from './types.js';
-import {c, log} from './util/log.js';
+import type {Config, KeyFinding, SyncOptions, SyncReport, SyncResult} from './types.js';
+import {c, log, logDetail} from './util/log.js';
 import {resolveNamespaceScope} from './util/paths.js';
 import {
     filterByFeature,
@@ -31,7 +31,7 @@ interface LocaleStat {
  */
 export function runSync(
     config: Config,
-    {write = false, clean = false, featureFilter = null, checkOnly = false}: SyncOptions = {},
+    {write = false, clean = false, featureFilter = null, checkOnly = false, force = false}: SyncOptions = {},
 ): SyncResult {
     const mode = checkOnly ? 'CHECK' : 'EXTRACT';
     log(`\n${c.bold}lexen ${mode}${featureFilter ? ` (${featureFilter})` : ''}`, c.bold);
@@ -158,6 +158,13 @@ export function runSync(
         log(`\n${c.yellow}Fix these before keys can be validated for these namespaces.${c.reset}`);
     }
 
+    // Structured findings — accumulated for SyncReport (non-human renderers).
+    const reportMissing: KeyFinding[] = [];
+    const reportUnused: KeyFinding[] = [];
+    const reportUntranslated: KeyFinding[] = [];
+    // Preserve warnings accumulate both invalid and redundant entries.
+    const reportPreserve = [...invalidPreserve, ...redundantPreserve];
+
     let totalAdded = 0;
     let totalRemoved = 0;
     let totalKeys = 0;
@@ -212,11 +219,32 @@ export function runSync(
         return false;
     };
 
+    // Compute clean-protection from unresolved call sites.
+    // A namespace with an unresolved dynamic `t(<expr>)` call must not be pruned
+    // unless the user explicitly passes --force, because the missing key could be
+    // the very key that would be deleted (silent MISSING_MESSAGE in production).
+    const protectedNamespaces = new Set<string>();
+    let hasUnknownNsUnresolved = false;
+    if (clean && !force) {
+        for (const u of relevantUnresolved) {
+            if (u.namespaces && u.namespaces.length > 0) {
+                // Key unresolved but its namespace is known — protect that namespace.
+                for (const ns of u.namespaces) protectedNamespaces.add(ns);
+            } else {
+                // Namespace not attributable — dynamic `useTranslations(<expr>)`,
+                // an untraceable propFlow `t`-prop, or an unresolved configured
+                // call. We can't know which namespace's keys are at risk, so
+                // protect every namespace from pruning until --force.
+                hasUnknownNsUnresolved = true;
+            }
+        }
+    }
+
     for (const [namespace, keys] of namespaceKeys.entries()) {
         const sortedKeys = [...keys].sort();
         namespacesProcessed++;
 
-        log(`\n${c.cyan}${namespace}${c.reset} (${sortedKeys.length} keys in code)`);
+        logDetail(`\n${c.cyan}${namespace}${c.reset} (${sortedKeys.length} keys in code)`);
 
         for (const locale of config.locales) {
             const existing = readNamespace(config, namespace, locale);
@@ -249,6 +277,7 @@ export function runSync(
                 log(`  ${locale}: ${c.yellow}+${missing.length} new${c.reset}`);
                 missing.forEach(k => {
                     log(`    ${c.green}+ ${k}${c.reset}`);
+                    reportMissing.push({namespace, key: k, locale});
                     if (write) {
                         setNestedValue(existing, k, '');
                         changed = true;
@@ -257,42 +286,47 @@ export function runSync(
                 totalAdded += missing.length;
             }
 
-            if (unused.length > 0 && clean) {
+            const isProtected = clean && !force && (protectedNamespaces.has(namespace) || hasUnknownNsUnresolved);
+            if (unused.length > 0 && clean && !isProtected) {
                 log(`  ${locale}: ${c.red}-${unused.length} unused${c.reset}`);
                 unused.forEach(k => {
                     log(`    ${c.red}- ${k}${c.reset}`);
+                    reportUnused.push({namespace, key: k, locale});
                     if (write) {
                         deleteNestedValue(existing, k);
                         changed = true;
                     }
                 });
                 totalRemoved += unused.length;
+            } else if (unused.length > 0 && isProtected) {
+                log(`  ${locale}: ${c.yellow}${unused.length} unused kept${c.reset} — namespace has unresolved dynamic keys; --force to prune`);
             } else if (unused.length > 0) {
-                log(`  ${locale}: ${c.dim}${unused.length} unused (use --clean to remove)${c.reset}`);
+                logDetail(`  ${locale}: ${c.dim}${unused.length} unused (use --clean to remove)${c.reset}`);
             }
 
             if (preserved.length > 0) {
-                log(`  ${locale}: ${c.blue}${preserved.length} preserved (auto-detected)${c.reset}`);
+                logDetail(`  ${locale}: ${c.blue}${preserved.length} preserved (auto-detected)${c.reset}`);
             }
 
             const finalKeys = getLeafKeys(existing);
             const untranslated = finalKeys.filter(k => getNestedValue(existing, k) === '');
             if (untranslated.length > 0) {
                 log(`  ${locale}: ${c.magenta}${untranslated.length} untranslated${c.reset}`);
+                for (const k of untranslated) reportUntranslated.push({namespace, key: k, locale});
                 localeStats[locale].untranslated += untranslated.length;
                 totalUntranslated += untranslated.length;
             }
             localeStats[locale].total += finalKeys.length;
 
             if (missing.length === 0 && unused.length === 0 && untranslated.length === 0) {
-                log(`  ${locale}: ${c.green}synced${c.reset} (${existingKeys.length} keys)`);
+                logDetail(`  ${locale}: ${c.green}synced${c.reset} (${existingKeys.length} keys)`);
             }
 
             if (write && changed) {
                 writeNamespace(config, namespace, locale, existing);
             }
 
-            totalKeys += existingKeys.length + missing.length - (clean ? unused.length : 0);
+            totalKeys += existingKeys.length + missing.length - (clean && !isProtected ? unused.length : 0);
         }
     }
 
@@ -319,6 +353,25 @@ export function runSync(
         locales: config.locales,
     });
 
+    // Deduplicate unresolved calls the same way as above for the report.
+    const seenForReport = new Set<string>();
+    const dedupedForReport = relevantUnresolved.filter(u => {
+        const key = `${u.file}:${u.line}:${u.snippet}:${u.call}`;
+        if (seenForReport.has(key)) return false;
+        seenForReport.add(key);
+        return true;
+    });
+
+    const syncReport: SyncReport = {
+        missing: reportMissing,
+        unused: reportUnused,
+        untranslated: reportUntranslated,
+        drift,
+        invalidNamespace: invalidUsages,
+        preserve: reportPreserve,
+        unresolved: dedupedForReport,
+    };
+
     if (checkOnly && (totalAdded > 0 || totalRemoved > 0 || drift.length > 0)) {
         const issues: string[] = [];
         if (totalAdded > 0) issues.push(`${totalAdded} missing`);
@@ -328,7 +381,7 @@ export function runSync(
         if (totalAdded > 0 || totalRemoved > 0) {
             log(`Run ${c.cyan}pnpm lexen extract${clean ? '' : ' --clean'}${c.reset} to fix keys.\n`);
         }
-        return {ok: false, code: 1, added: totalAdded, removed: totalRemoved, untranslated: totalUntranslated, drift: drift.length};
+        return {ok: false, code: 1, added: totalAdded, removed: totalRemoved, untranslated: totalUntranslated, drift: drift.length, report: syncReport};
     }
 
     if (totalAdded > 0) {
@@ -340,7 +393,7 @@ export function runSync(
         log(`\n${c.green}All keys are synced!${c.reset}\n`);
     }
 
-    return {ok: true, code: 0, added: totalAdded, removed: totalRemoved, untranslated: totalUntranslated, drift: drift.length};
+    return {ok: true, code: 0, added: totalAdded, removed: totalRemoved, untranslated: totalUntranslated, drift: drift.length, report: syncReport};
 }
 
 function printSummary({

@@ -12,6 +12,24 @@ export const c = {
 
 export type Color = (typeof c)[keyof typeof c] | '';
 
+let quiet = false;
+/** When true, ALL log output is suppressed (used for machine-readable formats). */
+let silent = false;
+
+export function setQuiet(v: boolean): void {
+    quiet = v;
+}
+
+/** Suppress ALL log/logDetail output — for machine-readable format renderers. */
+export function setSilent(v: boolean): void {
+    silent = v;
+}
+
 export function log(msg: string, color: Color = ''): void {
+    if (silent) return;
     console.log(`${color}${msg}${c.reset}`);
+}
+
+export function logDetail(msg: string, color: Color = ''): void {
+    if (!quiet) log(msg, color);
 }

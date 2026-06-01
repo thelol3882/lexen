@@ -1,12 +1,9 @@
 import {BARE_NAMESPACE} from './extract.js';
-import type {Config, InvalidUsage, NamespaceKeys, PlaceholderDrift, UsageRecord} from './types.js';
+import type {Config, InvalidUsage, NamespaceKeys, PlaceholderDrift, PreserveWarning, UsageRecord} from './types.js';
 import {getNestedValue, readNamespace} from './locales.js';
 
-export interface PreserveWarning {
-    namespace: string;
-    entry: string;
-    reason: string;
-}
+// Re-export so existing callers of `import { PreserveWarning } from './validate.js'` still work.
+export type {PreserveWarning} from './types.js';
 
 /**
  * Flag preserve entries pointing at namespaces with no locales dir on disk —

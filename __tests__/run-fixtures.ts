@@ -13,6 +13,9 @@ import {fileURLToPath} from 'url';
 
 import {loadConfig} from '../config.js';
 import {extractAll} from '../extract.js';
+import {collectRuleViolations} from '../lint.js';
+import {parseFormat} from '../reporters.js';
+import {runSync} from '../sync.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -150,7 +153,101 @@ function main(): number {
         console.log('PASS configuredCalls-localDecl: local declaration correctly excluded');
     }
 
-    const totalAssertions = EXPECTED.length + 3;
+    // ── Phase 2: safe-clean + --force assertions ──────────────────────────────
+    // The 'cleanguard' feature has:
+    //   - t('kept')       — static key (extracted)
+    //   - t(dynamicKeyVar) — unresolved dynamic key (namespace known = 'cleanguard')
+    //   - locale file has 'kept' + 'orphan' (orphan is not in code)
+    //
+    // Without --force, --clean must NOT prune 'orphan' (result.removed === 0).
+    // With --force, --clean SHOULD prune 'orphan' (result.removed >= 1).
+    // write:false ensures no locale files are mutated.
+    {
+        const cleanGuardResult = runSync(config, {clean: true, write: false, featureFilter: 'cleanguard'});
+        if (cleanGuardResult.removed !== 0) {
+            // eslint-disable-next-line no-console
+            console.error(`FAIL cleanguard-protected: expected removed=0 without --force, got ${cleanGuardResult.removed}`);
+            failures++;
+        } else {
+            // eslint-disable-next-line no-console
+            console.log('PASS cleanguard-protected: orphan key kept (removed=0) without --force');
+        }
+
+        const cleanGuardForceResult = runSync(config, {clean: true, write: false, force: true, featureFilter: 'cleanguard'});
+        if (cleanGuardForceResult.removed < 1) {
+            // eslint-disable-next-line no-console
+            console.error(`FAIL cleanguard-force: expected removed>=1 with --force, got ${cleanGuardForceResult.removed}`);
+            failures++;
+        } else {
+            // eslint-disable-next-line no-console
+            console.log(`PASS cleanguard-force: orphan key pruned (removed=${cleanGuardForceResult.removed}) with --force`);
+        }
+    }
+
+    // ── Phase 3: lint + reporters assertions ─────────────────────────────────
+    // Fixture 'linttest' has a rule-1 violation (dynamic useTranslations namespace)
+    // and a rule-2 violation (dynamic t() key). collectRuleViolations must surface both.
+    {
+        const violations = collectRuleViolations(config, 'linttest');
+        const rule1 = violations.filter(v => v.rule === 1);
+        const rule2 = violations.filter(v => v.rule === 2);
+
+        if (rule1.length === 0) {
+            // eslint-disable-next-line no-console
+            console.error('FAIL lint-rule1: expected rule 1 violation for dynamic useTranslations, got none');
+            failures++;
+        } else if (rule1[0].file === null || rule1[0].line === null) {
+            // eslint-disable-next-line no-console
+            console.error(`FAIL lint-rule1: expected non-null file+line, got file=${rule1[0].file} line=${rule1[0].line}`);
+            failures++;
+        } else {
+            // eslint-disable-next-line no-console
+            console.log(`PASS lint-rule1: rule 1 violation at ${rule1[0].file}:${rule1[0].line}`);
+        }
+
+        if (rule2.length === 0) {
+            // eslint-disable-next-line no-console
+            console.error('FAIL lint-rule2: expected rule 2 violation for dynamic t(), got none');
+            failures++;
+        } else if (rule2[0].file === null || rule2[0].line === null) {
+            // eslint-disable-next-line no-console
+            console.error(`FAIL lint-rule2: expected non-null file+line, got file=${rule2[0].file} line=${rule2[0].line}`);
+            failures++;
+        } else {
+            // eslint-disable-next-line no-console
+            console.log(`PASS lint-rule2: rule 2 violation at ${rule2[0].file}:${rule2[0].line}`);
+        }
+    }
+
+    // parseFormat basics.
+    {
+        const fmt = parseFormat(['--format=json']);
+        if (fmt !== 'json') {
+            // eslint-disable-next-line no-console
+            console.error(`FAIL parseFormat-json: expected 'json', got '${fmt}'`);
+            failures++;
+        } else {
+            // eslint-disable-next-line no-console
+            console.log('PASS parseFormat-json: parseFormat([\'--format=json\']) === \'json\'');
+        }
+
+        let threw = false;
+        try {
+            parseFormat(['--format=invalid']);
+        } catch {
+            threw = true;
+        }
+        if (!threw) {
+            // eslint-disable-next-line no-console
+            console.error('FAIL parseFormat-unknown: expected throw on unknown format value');
+            failures++;
+        } else {
+            // eslint-disable-next-line no-console
+            console.log('PASS parseFormat-unknown: unknown format value throws as expected');
+        }
+    }
+
+    const totalAssertions = EXPECTED.length + 5 + 4;
     if (failures > 0) {
         // eslint-disable-next-line no-console
         console.error(`\n${failures} fixture assertion(s) failed.`);

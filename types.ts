@@ -78,6 +78,7 @@ export interface ResolverConfig {
 }
 
 export interface RawConfig {
+    $schema?: string;
     srcDir: string;
     locales: string[];
     defaultLocale?: string;
@@ -143,6 +144,13 @@ export interface UnresolvedCall extends UsageRecord {
     call: 'useTranslations' | 't' | 'propFlow' | 'call';
     /** Short human-readable source snippet of the offending argument. */
     snippet: string;
+    /**
+     * The namespaces the `t` function is bound to at this unresolved call site.
+     * Present only for `call === 't'` (bound namespaces are known).
+     * Absent for `useTranslations` / `propFlow` / `call` where the namespace
+     * itself is unknown.
+     */
+    namespaces?: string[];
 }
 
 export interface ExtractResult {
@@ -163,6 +171,56 @@ export interface SyncOptions {
     clean?: boolean;
     featureFilter?: string | null;
     checkOnly?: boolean;
+    force?: boolean;
+}
+
+/**
+ * A single key-level finding from a sync run (missing, unused, or untranslated).
+ * Locale files don't carry per-key file/line info, so only namespace+key+locale.
+ */
+export interface KeyFinding {
+    namespace: string;
+    key: string;
+    locale: string;
+}
+
+/**
+ * Warning about a preserve config entry (invalid pointer or redundant coverage).
+ * Moved here from validate.ts so reporters and lint can import it without a cycle.
+ */
+export interface PreserveWarning {
+    namespace: string;
+    entry: string;
+    reason: string;
+}
+
+/**
+ * Structured report produced by runSync. Populated when `write` is false
+ * (check / lint paths) so callers can render findings in machine formats.
+ */
+export interface SyncReport {
+    missing: KeyFinding[];
+    unused: KeyFinding[];
+    untranslated: KeyFinding[];
+    drift: PlaceholderDrift[];
+    invalidNamespace: InvalidUsage[];
+    preserve: PreserveWarning[];
+    unresolved: UnresolvedCall[];
+}
+
+/**
+ * A rule-violation diagnostic produced by `lexen lint`.
+ * `file`/`line`/`column` are null for violations without a precise call-site
+ * (e.g. rule 7 key-naming, where key→callsite isn't tracked).
+ */
+export interface RuleViolation {
+    rule: number;
+    file: string | null;
+    line: number | null;
+    column: number | null;
+    snippet: string;
+    message: string;
+    hint: string;
 }
 
 export interface SyncResult {
@@ -172,6 +230,8 @@ export interface SyncResult {
     removed: number;
     untranslated: number;
     drift: number;
+    /** Structured findings — only populated when `write` is false. */
+    report?: SyncReport;
 }
 
 export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];

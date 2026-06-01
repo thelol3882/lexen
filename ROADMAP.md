@@ -1,187 +1,209 @@
 # Lexen — Roadmap
 
-## Completed
+## Completed / Shipped
 
-### Type-checker-based dynamic resolution (Path A) — shipped
+### Type-checker-based dynamic resolution — shipped
 
-Lexen now ships a TypeScript type-checker resolver behind a config flag:
-`"resolver": "typechecker"` in `i18n.config.json`. It resolves the shapes
-described below — `t(item.labelKey)`, `useTranslations(CONFIG[k].ns)`,
-template holes whose type is a string-literal union — plus caller-passed
-`t` props (`propFlow`). Default is still `"ast"` for zero-config projects.
+Lexen ships a TypeScript type-checker resolver behind a config flag:
+`"resolver": "typechecker"` in `i18n.config.json`. It resolves dynamic
+shapes — `t(item.labelKey)`, `useTranslations(CONFIG[k].ns)`, template holes
+whose type is a string-literal union — plus caller-passed `t` props
+(`propFlow`). Default is still `"ast"` for zero-config projects.
 
 Use `pnpm lexen extract --compare-resolvers` to diff AST vs typechecker
-output before flipping the default, and `pnpm lexen:test` to run the
-fixture suite that exercises every supported pattern.
+output before flipping, and `pnpm lexen:test` to run the fixture suite that
+exercises every supported pattern.
 
-Once flipped, `preserve` entries that the resolver now covers are flagged
-by `lexen check` as redundant (and can be deleted). Preserve stays as an
-escape hatch for truly-runtime keys (`t(fn())`, `t(api.x())`).
+Once flipped, `preserve` entries the resolver now covers are flagged by
+`lexen check` as redundant (and can be deleted). `preserve` stays as an
+escape hatch for truly-runtime keys.
+
+### `calls` config — custom call-extractor — shipped
+
+Builder functions like `buildMetadata({namespace, key})` are recognized as
+key sources. Configure them via `calls` in `i18n.config.json`:
+
+```json
+"calls": [
+  {
+    "callee": "buildMetadata",
+    "package": "@/utils/meta",
+    "namespace": {"prop": "namespace", "default": "common"},
+    "keys": ["{key}"],
+    "defaults": {"key": "title"}
+  }
+]
+```
+
+Each entry specifies callee name(s), an optional import-source filter, the
+argument index, how to extract the namespace from the object argument, and
+key templates whose `${propName}` holes are expanded via literal resolution.
+See `CallExtractorConfig` in `types.ts`.
+
+### Safe clean + `--force` — shipped
+
+`extract --clean` will not prune a namespace that has unresolved dynamic
+keys. If a `useTranslations(<expr>)` call can't be attributed to a namespace,
+or an unattributable `t(<expr>)` is present, the clean is blocked globally
+until `--force` is passed. This is the **"lexen never silently loses a key"**
+guarantee.
+
+`--force` overrides all protections and prunes everything `--clean` would
+normally skip.
+
+### `lexen lint` — rules-violation diagnostics — shipped
+
+```bash
+pnpm lexen lint [feature] [--naming] [--format=human|github|json]
+```
+
+Report-only rules diagnostics. Each violation is pinned to `file:line:col`
+with a fix hint, grouped by rule. Default run surfaces the runtime-risk rules:
+
+| Rule | What it flags | How |
+|---|---|---|
+| 1 | dynamic `useTranslations` namespace | unresolved call → rule 1 |
+| 2 | unresolved `t()` key | unresolved `t` / configured-call arg |
+| 4 | `t` passed as prop | propFlow trace failure |
+| 5 | invalid namespace | `lexen check` rule; also in lint |
+| 9 | placeholder drift | ICU variable mismatch across locales |
+
+Rule 7 (camelCase key naming) is opt-in via `--naming` — it's a style
+preference and can produce many findings on large codebases.
+
+Exit 1 if any violations are found.
+
+### `--format=human|github|json` on `check` and `lint` — shipped
+
+`--format=github` emits `::error file=…,line=…::` annotations for CI.
+`--format=json` emits a structured report/violation array.
+
+**Important:** machine formats must be invoked as `pnpm --silent lexen …`
+(or the `lexen` bin directly) — plain `pnpm` prints a lifecycle banner to
+stdout that corrupts piped JSON.
+
+### `check --strict` — shipped
+
+```bash
+pnpm lexen check --strict
+```
+
+Folds the lint correctness-rules check into `check`. One CI command gates
+both locale-sync *and* rules violations. Exit 1 on either.
+
+### `--quiet` on `extract` / `check` — shipped
+
+Suppresses per-namespace "synced" detail lines. Only problems and the summary
+are printed. Useful when running on a large codebase where the happy-path
+output is noise.
+
+### Config JSON Schema — shipped
+
+`schema/i18n.config.schema.json` ships with the package. Configs can opt in
+to IDE validation and autocomplete with:
+
+```json
+{
+  "$schema": "./node_modules/@thelol3882/lexen/schema/i18n.config.schema.json"
+}
+```
+
+`lexen init` scaffolds the `$schema` line automatically (all presets include
+it).
 
 ---
 
-## Dynamic-call resolution (in-place of `preserve` directives) — historical notes
+## In Progress / Planned
 
-Today lexen has a strict static-extraction limit: `t(variable)` and
-`useTranslations(variable)` are invisible. The workaround is the `preserve`
-config directive (see README §"What Lexen can't see" fix 3), which
-trades mechanical correctness for developer diligence — if a new dynamic
-key isn't added to `preserve`, `--clean` will silently prune it and the
-UI will render `MISSING_MESSAGE` at runtime.
+### `lexen lint --fix` (ruff-style) — planned
 
-### Goal
+Modelled on `ruff check --fix`: auto-apply only **SAFE** fixes (behavior-
+preserving, no data loss risk). UNSAFE fixes are **not** applied by `--fix`;
+they're reported with a marker and require explicit `--unsafe-fixes`.
 
-Teach lexen to resolve **config-driven** dynamic calls automatically using
-the TypeScript type-checker, eliminating most manual `preserve` entries.
+Per-rule classification:
 
-### Scope (what to support)
+| Rule | Fix class | Notes |
+|---|---|---|
+| 9 — placeholder drift | Report-only | No mechanical fix; translator must reconcile |
+| 7 — camelCase rename | **UNSAFE** | Cross-file codemod: rewrite `t('…')` call + locale JSON key + every other reference. Risk of missing dynamic or aliased refs. |
+| 3 — key in data → call-site | **UNSAFE** | Structural refactor; semantics may change |
+| 5 — invalid namespace | Report-only | Requires manual wiring of a new `locales/` dir |
+| 1/2/4 — unresolved calls | Report-only | No mechanical fix; depends on code intent |
+| locale sort / format normalization | **SAFE** | Already handled by `lexen sort` |
 
-**In-scope** — static config arrays / object properties where the type
-system can prove the possible values:
+The safe auto-fix set is small — `lint --fix` will primarily be a reporter.
+The value of `--unsafe-fixes` is having a guided codemod path for bulk
+renames (rule 7) that the developer reviews before committing.
+
+### Incremental program + `--watch` — planned
+
+Re-use the TypeScript compiler's incremental build to avoid reparsing the
+entire project on each run. Enables a `--watch` mode that re-extracts on file
+save and streams `lexen lint` findings to the terminal in real time — useful
+during active development without the CI round-trip.
+
+---
+
+## Background / Historical Notes
+
+### Dynamic-call resolution (Path A)
+
+The historical notes below describe the design path that led to the
+typechecker resolver (now shipped). They document the scope, implementation
+sketch, and rollout plan as originally written — kept for reference.
+
+#### Scope
+
+**In-scope** — static config arrays / object properties where the type system
+can prove possible values:
 
 ```ts
 // Array of literals — enumerate every labelKey
 const items = [
-    { labelKey: 'nav.home', ... },
-    { labelKey: 'nav.audit', ... },
+    {labelKey: 'nav.home', ...},
+    {labelKey: 'nav.audit', ...},
 ];
 items.map(item => t(item.labelKey));
-// lexen should emit: uses of nav.home, nav.audit in this namespace
+// emits: nav.home, nav.audit
 
-// Config object keyed by enum / union
-const ROLE_STATS: Record<Role, { translationNamespace: string }> = {
-    admin: { translationNamespace: 'widget.dashboard.academyStats' },
-    owner: { translationNamespace: 'widget.dashboard.ownerStats' },
+// Config object keyed by union
+const ROLE_STATS: Record<Role, {translationNamespace: string}> = {
+    admin: {translationNamespace: 'widget.dashboard.academyStats'},
+    owner: {translationNamespace: 'widget.dashboard.ownerStats'},
 };
 const t = useTranslations(ROLE_STATS[role].translationNamespace);
-// lexen should emit: uses under widget.dashboard.academyStats + widget.dashboard.ownerStats
 ```
 
 **Out-of-scope** — impossible without executing the code:
 
 ```ts
-t(getLabel());              // function return value
-t(api.fetchLabel());        // I/O
-t(cond ? dynamicA : dynamicB);  // non-literal ternary branches
+t(getLabel());          // function return value
+t(api.fetchLabel());    // I/O
 ```
 
 For these, `preserve` directives remain the escape hatch.
 
-### Implementation sketch
+#### Rollout (completed)
 
-1. **Use the TypeScript compiler's type-checker**, not just the AST. `ts.createProgram`
-   with a proper `tsconfig.json` gives access to `getSymbolAtLocation`, `getTypeAtLocation`,
-   and literal-type resolution.
-
-2. **For `t(<expr>)` where `<expr>` is not a literal**: walk the expression:
-   - `identifier` → resolve symbol → find declaration → extract literal initializer if `const`.
-   - `x.y` (property access) → resolve `x`'s type → if it's a literal string type (or union of string literals), emit each.
-   - `arr[i]` / `items.map(i => t(i.x))` → resolve element type; same rules.
-
-3. **For `useTranslations(<expr>)`**: same resolution, but the result is a **namespace**
-   (or set of possible namespaces). Currently `extractAll` extracts keys per-namespace; to
-   support multiple resolved namespaces at one call site, extend the binding map
-   (`varToNamespace: Map<string, string>`) to `Map<string, string[]>`.
-
-4. **Caller-passed `t` prop**:
-   ```ts
-   function TransportCard({t}: {t: (key: string) => string}) { t('X'); }
-   // parent: <TransportCard t={someT} />
-   ```
-   Lexen today treats the inner `t('X')` as untracked (no binding). With type-checker
-   help, lexen could detect that `someT` came from a specific `useTranslations(ns)` and
-   attribute `'X'` to `ns`. Handles the TransportRosterTab-style patterns we hit in
-   Phase 2c-mixed without renaming props.
-
-### Effort estimate
-
-~1–2k LOC, 2–3 focused days. The bulk is in `extract.ts`, extending `callToNamespace`
-and `collectTranslationCall`. The validator and sync don't change — they operate on
-the already-emitted `namespaceKeys` map.
-
-### Rollout
-
-1. Land the implementation behind a feature flag (`"resolver": "ast" | "typechecker"` in
-   config, default `ast`).
-2. Run both resolvers in parallel for a release; compare outputs.
-3. When typechecker resolver is at parity + covers more cases, flip default.
-4. Deprecate manual `preserve` entries that the resolver now handles. The `preserve`
-   directive itself stays — there are always truly-dynamic cases that need it.
-
-### Why not do this now
-
-Path B (`preserve` directive) covers our current codebase's ~5 dynamic patterns for
-~100 LOC. Path A (this roadmap item) is 10–20× the engineering for coverage we already
-have via `preserve`. Reasonable to pursue once lexen has 3+ consumer projects and the
-per-project `preserve` config gets annoying.
-
-### Related ideas (smaller, not blocking)
-
-- **`// @lexen-preserve ns.prefix.*` JSDoc directive** — in-source equivalent of the
-  config `preserve` entry, scoped to a specific file or call site. Useful when a
-  dynamic pattern is localized to one component and shouldn't bloat the global config.
-
-- **`preserve` validation on check** — warn if a `preserve` entry covers keys that
-  are already statically visible (redundant), or covers a namespace that doesn't exist.
-  Avoids stale config as code changes.
-
-- **CI integration** — built-in `pnpm lexen check --format=junit` / `--format=github`
-  output for nicer error surfaces in CI logs.
+1. Implementation behind `"resolver": "ast" | "typechecker"` in config.
+2. Both resolvers available in parallel via `--compare-resolvers`.
+3. Typechecker is at parity + covers more cases; default remains `ast` for
+   zero-config projects.
+4. `preserve` entries the resolver now covers are flagged as redundant by
+   `lexen check`. The `preserve` directive itself stays for truly-dynamic
+   cases.
 
 ---
 
-## Known regressions to investigate (post-Phase-2c-mixed)
+### Related ideas
 
-These are runtime `MISSING_MESSAGE` errors surfaced during manual dev testing
-after all four 2c-mixed batches merged. Most are cases where a static key
-**should** have been seen by lexen but wasn't moved correctly, OR a call
-site is pointing at the wrong namespace after the split.
+- **`// @lexen-preserve ns.prefix.*` JSDoc directive** — in-source equivalent
+  of the config `preserve` entry, scoped to a specific file or call site.
+  Useful when a dynamic pattern is localized to one component and shouldn't
+  bloat the global config.
 
-### `GroupPlayersTableDesktop.tsx` — many missing groups/common keys
-
-File: `web/app/src/widgets/groups/GroupDetails/...` (exact path to confirm).
-
-Failing lookups:
-- `groups.title`, `groups.stats.totalPlayers`, `groups.add`, `groups.searchPlaceholder`
-- `groups.filterByCategory`, `groups.filterByPosition`
-- `groups.statusAll`, `groups.statusActive`, `groups.statusInactive`
-- `groups.columns.player`, `groups.columns.number`, `groups.columns.birthYear`, `groups.columns.category`, `groups.columns.joined`, `groups.columns.status`
-- `groups.noPosition`, `groups.playerCategory.regular`, `groups.joinDate`, `groups.active`, `groups.deactivate`
-- `common.selectAll`, `common.select`, `common.actions.delete`
-
-Hypotheses:
-1. The widget uses `useTranslations('groups')` but the keys were moved to
-   `widget.groups` during Batch A (which migrated `groups.dashboard.*` →
-   `widget.groups.dashboard.*`). Likely the binding should be `widget.groups`
-   or split into two bindings.
-2. The `common.selectAll`, `common.select`, `common.actions.delete` keys were
-   pruned in Phase 3a because no other static call referenced them — need to
-   restore to global messages/common or add to `preserve["common"]`.
-
-Investigation steps:
-1. Read the file and enumerate every `t('X')` call.
-2. For each, check whether `X` exists in `features/groups/locales/ru.json` or
-   `widgets/groups/locales/ru.json`.
-3. Route the binding accordingly (two bindings if mixed). Follow the
-   transport pilot's pattern (commit 504a8f73).
-4. Restore `common.selectAll`, `common.select`, `common.actions.delete` to
-   `i18n/messages/{ru,kk}.json` under `common` if they were pruned but are
-   legitimately used.
-
-### Other suspected regressions (not yet reproduced)
-
-Areas to sweep with `pnpm dev` once backend is up:
-- `features/transport/components/TransportsList.tsx` — uses `actions.*`,
-  `status.*`, `table.*` which should have stayed in feature. Verify.
-- `src/widgets/groups/**/PaymentHistoryDrawer.tsx` — cross-namespace
-  payments+groups file. Verify bindings after 2c-mixed.
-- Any feature that Batch D SKIPPED (auth, schedule, news) should have no
-  regressions, but worth a quick pass.
-
-### Prevention for future migrations
-
-- Add `preserve` entries before running `extract --clean`, not after.
-- When splitting a mixed feature, verify every consuming file's bindings in
-  the same PR — don't rely on lexen check alone (it misses dynamic
-  namespace arguments and the `common.*` direct-JSON-import cases).
-- Consider Path A (above) to eliminate this class of regression mechanically.
+- **`preserve` validation on check** — warn if a `preserve` entry covers keys
+  that are already statically visible (redundant), or covers a namespace that
+  doesn't exist. Avoids stale config as code changes. (Partially shipped:
+  `lexen check` already reports redundant and invalid preserve entries.)

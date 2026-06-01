@@ -44,10 +44,18 @@ Then `pnpm i18n extract`, `pnpm i18n check`, etc.
 | Command | What it does |
 |---|---|
 | `lexen extract` | Scan `src/`, add missing keys (empty `""`) to every locale file. |
-| `lexen extract --clean` | Same, but also remove keys that exist on disk but not in code. |
+| `lexen extract --clean` | Same, but also remove keys that exist on disk but not in code (safe — see below). |
+| `lexen extract --clean --force` | Prune all unused keys, even in namespaces with unresolved dynamic calls. |
+| `lexen extract --quiet` | Suppress per-namespace "synced" detail; show only problems + summary. |
 | `lexen extract <feature>` | Restrict to one namespace. |
 | `lexen extract --compare-resolvers` | Run both resolvers side-by-side and diff their output. Useful before flipping `resolver` to `typechecker`. |
 | `lexen check` | CI mode — fail (exit 1) on missing / unused / invalid-namespace drift. |
+| `lexen check --strict` | Same, plus fold in `lexen lint` correctness rules. One command for CI. |
+| `lexen check --quiet` | Suppress per-namespace "synced" detail; show only failures + summary. |
+| `lexen check --format=human\|github\|json` | Output format for CI integrations (see below). |
+| `lexen lint` | Rules-violation diagnostics — `file:line:col` + fix hint, grouped by rule. Exit 1 if any. |
+| `lexen lint --naming` | Include rule 7 (camelCase key naming) in the report. |
+| `lexen lint --format=human\|github\|json` | Output format. |
 | `lexen sort` | Normalize key order in every locale file (deep-sort, alphabetical). |
 | `lexen init` | Scaffold `i18n.config.json` from a preset (`--preset`, `--force`). |
 
@@ -103,6 +111,43 @@ The validator rejects multi-segment namespaces (except the widget prefix): `useT
 - `layout.*` — path templates with `{namespace}`, `{widget}`, `{locale}` placeholders.
 - Widget support is opt-in. Leave `layout.widget` / `widgetNamespacePrefix` / `widgetsDir` unset to disable it.
 - `resolver` — optional. `"ast"` (default) or `"typechecker"`. The typechecker mode loads the project's `tsconfig.json` and uses the TypeScript type-checker to resolve non-literal args (`t(item.labelKey)`, `useTranslations(CONFIG[k].ns)`, template holes whose type is a string-literal union). Object form `{"mode": "typechecker", "propFlow": true, "tsconfig": "tsconfig.json"}` exposes the sub-flags — `propFlow` enables caller-passed `t` prop resolution (default `true` when `mode` is `typechecker`).
+- `calls` — optional array of custom call-extractor configs (see §Custom call extractors below).
+
+### Config JSON Schema
+
+Add the `$schema` field to get IDE validation and autocomplete for `i18n.config.json`:
+
+```json
+{
+  "$schema": "./node_modules/@thelol3882/lexen/schema/i18n.config.schema.json"
+}
+```
+
+`lexen init` scaffolds this line automatically (all presets include it).
+
+### Custom call extractors (`calls`)
+
+Builder functions that read from the message tree (e.g. `buildMetadata({namespace, key})`)
+can be taught to lexen via the `calls` array:
+
+```json
+"calls": [
+  {
+    "callee": "buildMetadata",
+    "package": "@/utils/meta",
+    "namespace": {"prop": "namespace", "default": "common"},
+    "keys": ["{key}"],
+    "defaults": {"key": "title"}
+  }
+]
+```
+
+- `callee` — function name (or array of names) to match at call sites.
+- `package` — optional import-source filter; only matches calls where the callee was imported from this module (mirrors `hook.package`).
+- `arg` — index of the object-literal argument (default `0`).
+- `namespace` — `prop` is the object property holding the namespace; `default` is used when the prop is absent.
+- `keys` — key templates; `${propName}` holes are filled from the object argument's properties, cartesian-expanded across all holes.
+- `defaults` — literal fallbacks for props absent at a given call site.
 
 ### Choosing a resolver
 
@@ -144,6 +189,73 @@ const tCommon = useTranslations('common');
 tSchedule('modal.group');
 tCommon('create');
 ```
+
+### Safe clean — lexen never silently loses a key
+
+`extract --clean` removes unused keys, but it will **not** prune a namespace
+that has unresolved dynamic calls. If a `useTranslations(<expr>)` can't be
+traced to a literal namespace, or an unattributable `t(<expr>)` is found
+anywhere in scope, the clean for that namespace (or the whole run if the
+namespace itself is unknown) is blocked:
+
+```
+ru: 3 unused kept — namespace has unresolved dynamic keys; --force to prune
+```
+
+Use `--force` to override and prune anyway. Use `lexen lint` first to see
+exactly which call sites are unresolved — fix those, then re-run `--clean`
+without `--force`.
+
+### `lexen lint` — rules-violation diagnostics
+
+```bash
+pnpm lexen lint [feature] [--naming] [--format=human|github|json]
+```
+
+Surfaces every rule violation with a precise `file:line:col` location and a
+fix hint, grouped by rule. No writes — report only.
+
+```
+rule 2 · unresolved t() key (3)
+  ! src/features/booking/BookingCard.tsx:42:12  t(item.statusKey)
+    → key not statically resolvable — store t('…') in data, or type the
+      template hole as a literal union (rule 6).
+```
+
+Default: rules 1, 2, 4, 5, 9 (runtime-risk correctness rules). Add
+`--naming` to include rule 7 (camelCase key naming) — it's opt-in because it
+produces style nits rather than correctness findings.
+
+Exit 1 if any violations are found. See [`RULES.md`](./RULES.md) for the
+full rule reference.
+
+### `check --strict` — one command for CI
+
+```bash
+pnpm --silent lexen check --strict
+```
+
+Folds `lexen lint` correctness rules into `check`. Exit 1 if there is any
+locale drift **or** any lint violation. Combine with `--format=github` for
+inline PR annotations:
+
+```bash
+pnpm --silent lexen check --strict --format=github
+```
+
+### `--format=human|github|json`
+
+Both `check` and `lint` accept `--format`:
+
+| Format | Output |
+|---|---|
+| `human` | Default — color-coded terminal output |
+| `github` | `::error file=…,line=…,col=…::message` — GitHub Actions annotations |
+| `json` | Structured JSON report / violation array to stdout |
+
+**`pnpm --silent` is required for machine formats.** Plain `pnpm` prints its
+lifecycle banner to stdout and corrupts piped JSON. Either use
+`pnpm --silent lexen …` or invoke the bin directly (`./node_modules/.bin/lexen …`).
 
 ## What Lexen can't see (static-extraction limits)
 
@@ -274,7 +386,10 @@ lexen/
 ├── locales.ts          Read / write / sort locale JSON files, discover valid namespaces.
 ├── validate.ts         Namespace usage + ICU placeholder-drift + preserve hygiene.
 ├── sync.ts             Reconciles extracted keys ↔ locale files.
+├── lint.ts             `lexen lint` — rules-violation diagnostics.
+├── reporters.ts        Output formatters (human / github / json).
 ├── types.ts            Shared type definitions.
+├── schema/             Config JSON Schema (i18n.config.schema.json).
 ├── util/
 │   ├── log.ts          ANSI color helpers.
 │   └── paths.ts        Config-driven path resolution + scope detection.

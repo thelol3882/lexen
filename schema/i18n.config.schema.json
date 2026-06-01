@@ -1,0 +1,194 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://github.com/thelol3882/lexen/schema/i18n.config.schema.json",
+    "title": "Lexen i18n config",
+    "description": "Configuration file for the lexen i18n key extractor (i18n.config.json).",
+    "type": "object",
+    "required": ["srcDir", "locales", "filePatterns", "hook", "layout"],
+    "additionalProperties": false,
+    "properties": {
+        "$schema": {
+            "type": "string",
+            "description": "JSON Schema reference — enables editor autocomplete and validation."
+        },
+        "srcDir": {
+            "type": "string",
+            "description": "Root directory lexen scans for translation calls, relative to the project root (e.g. \"src\")."
+        },
+        "locales": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "description": "List of locale codes to maintain (e.g. [\"en\", \"ru\"]). All locale files must be present for each namespace."
+        },
+        "defaultLocale": {
+            "type": "string",
+            "description": "The primary locale whose values are treated as the source of truth. Must be one of the entries in `locales`."
+        },
+        "filePatterns": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "description": "Glob patterns (relative to srcDir) of files to scan for translation calls (e.g. [\"**/*.{ts,tsx}\"])."
+        },
+        "ignore": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Glob patterns of files to exclude from scanning (e.g. [\"**/*.d.ts\"])."
+        },
+        "hook": {
+            "type": "object",
+            "description": "The translation hook lexen tracks (e.g. useTranslations from next-intl).",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Exact function name of the hook (e.g. \"useTranslations\" or \"useTranslation\")."
+                },
+                "package": {
+                    "type": "string",
+                    "description": "Import source filter — only hook calls imported from this package are matched (e.g. \"next-intl\")."
+                }
+            }
+        },
+        "layout": {
+            "type": "object",
+            "description": "Template paths that describe where locale JSON files live on disk.",
+            "required": ["feature"],
+            "additionalProperties": false,
+            "properties": {
+                "feature": {
+                    "type": "string",
+                    "description": "Path template for per-feature locale files. Supports {namespace} and {locale} placeholders (e.g. \"features/{namespace}/locales/{locale}.json\")."
+                },
+                "widget": {
+                    "type": "string",
+                    "description": "Path template for widget locale files. Supports {namespace} and {locale} (e.g. \"widgets/{namespace}/locales/{locale}.json\")."
+                },
+                "widgetNamespacePrefix": {
+                    "type": "string",
+                    "description": "Prefix used in useTranslations() calls to identify widget namespaces (e.g. \"widget\")."
+                },
+                "global": {
+                    "type": "string",
+                    "description": "Path template for the global/shared messages file. Supports {locale} (e.g. \"i18n/messages/{locale}.json\")."
+                },
+                "globalNamespace": {
+                    "type": "string",
+                    "description": "Namespace string that resolves to the global messages file (e.g. \"common\")."
+                },
+                "featuresDir": {
+                    "type": "string",
+                    "description": "Directory that contains all feature sub-directories, used for namespace discovery (e.g. \"features\")."
+                },
+                "widgetsDir": {
+                    "type": "string",
+                    "description": "Directory that contains all widget sub-directories, used for namespace discovery (e.g. \"widgets\")."
+                }
+            }
+        },
+        "preserve": {
+            "type": "object",
+            "description": "Keys that lexen's static analysis cannot see, keyed by namespace. \"*\" preserves all keys; an array preserves keys matching the listed prefixes. Preserved keys survive --clean.",
+            "additionalProperties": {
+                "oneOf": [
+                    {
+                        "type": "string",
+                        "const": "*",
+                        "description": "Preserve every key under this namespace."
+                    },
+                    {
+                        "type": "array",
+                        "items": { "type": "string", "minLength": 1 },
+                        "description": "Preserve keys matching these prefix strings (e.g. \"prefix.*\" or \"exactKey\")."
+                    }
+                ]
+            }
+        },
+        "resolver": {
+            "description": "Strategy for resolving non-literal translation arguments. \"ast\" (default) handles only string literals; \"typechecker\" uses the TypeScript compiler to resolve identifier types.",
+            "oneOf": [
+                {
+                    "type": "string",
+                    "enum": ["ast", "typechecker"],
+                    "description": "Shorthand: \"ast\" or \"typechecker\" with defaults."
+                },
+                {
+                    "type": "object",
+                    "description": "Fine-grained resolver configuration.",
+                    "additionalProperties": false,
+                    "properties": {
+                        "mode": {
+                            "type": "string",
+                            "enum": ["ast", "typechecker"],
+                            "description": "Resolver mode (default \"ast\")."
+                        },
+                        "propFlow": {
+                            "type": "boolean",
+                            "description": "Enable tracing of the `t` function passed as a prop back to its useTranslations() origin. Only effective when mode is \"typechecker\"."
+                        },
+                        "tsconfig": {
+                            "type": "string",
+                            "description": "Path to the tsconfig.json lexen uses for the typechecker program, relative to the project root."
+                        }
+                    }
+                }
+            ]
+        },
+        "calls": {
+            "type": "array",
+            "description": "Config-driven extractors for builder functions that consume translation keys directly (e.g. buildMetadata({namespace, key})).",
+            "items": {
+                "type": "object",
+                "required": ["callee", "namespace", "keys"],
+                "additionalProperties": false,
+                "properties": {
+                    "callee": {
+                        "oneOf": [
+                            { "type": "string", "minLength": 1 },
+                            { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+                        ],
+                        "description": "Function name(s) to match at call sites."
+                    },
+                    "package": {
+                        "type": "string",
+                        "description": "Import-source filter — only call sites imported from this module are matched."
+                    },
+                    "arg": {
+                        "type": "number",
+                        "description": "Index of the object-literal argument to inspect (default 0)."
+                    },
+                    "namespace": {
+                        "type": "object",
+                        "description": "How to extract the namespace from the object argument.",
+                        "required": ["prop"],
+                        "additionalProperties": false,
+                        "properties": {
+                            "prop": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "Property name whose value is the namespace string."
+                            },
+                            "default": {
+                                "type": "string",
+                                "description": "Fallback namespace used when the prop is absent at a call site."
+                            }
+                        }
+                    },
+                    "keys": {
+                        "type": "array",
+                        "items": { "type": "string", "minLength": 1 },
+                        "minItems": 1,
+                        "description": "Key templates. ${propName} holes are filled from the object argument's properties, cartesian-expanded across all holes."
+                    },
+                    "defaults": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" },
+                        "description": "Literal fallbacks for props absent at a given call site."
+                    }
+                }
+            }
+        }
+    }
+}
