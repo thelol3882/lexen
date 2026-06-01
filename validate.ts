@@ -1,4 +1,4 @@
-import {BARE_NAMESPACE} from './extract.js';
+import {BARE_NAMESPACE} from './extract/index.js';
 import type {Config, InvalidUsage, NamespaceKeys, PlaceholderDrift, PreserveWarning, UsageRecord} from './types.js';
 import {getNestedValue, readNamespace} from './locales.js';
 

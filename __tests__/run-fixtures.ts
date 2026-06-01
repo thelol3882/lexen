@@ -12,7 +12,7 @@ import path from 'path';
 import {fileURLToPath} from 'url';
 
 import {loadConfig} from '../config.js';
-import {extractAll} from '../extract.js';
+import {extractAll} from '../extract/index.js';
 import {collectRuleViolations} from '../lint.js';
 import {parseFormat} from '../reporters.js';
 import {runSync} from '../sync.js';

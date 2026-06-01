@@ -1,4 +1,4 @@
-import {extractAll} from './extract.js';
+import {extractAll} from './extract/index.js';
 import {
     deleteNestedValue,
     discoverValidNamespaces,

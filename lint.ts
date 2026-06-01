@@ -4,7 +4,7 @@
  * Runs extraction + validation and maps each finding to a `RuleViolation`
  * with file:line + a fix hint. Report-only; no auto-fix.
  */
-import {extractAll} from './extract.js';
+import {extractAll} from './extract/index.js';
 import {discoverValidNamespaces} from './locales.js';
 import {
     renderGithubViolations,

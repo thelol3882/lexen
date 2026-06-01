@@ -11,7 +11,7 @@ import {fileURLToPath} from 'url';
 const WATCH_RUNNING = -999;
 
 import {loadConfig} from './config.js';
-import {extractAll} from './extract.js';
+import {extractAll} from './extract/index.js';
 import {sortAll} from './locales.js';
 import {runSync} from './sync.js';
 import {collectRuleViolations, runLint} from './lint.js';
