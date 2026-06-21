@@ -14,6 +14,16 @@ export interface HookConfig {
 }
 
 /**
+ * One namespace-binding hook, or several. A single object keeps the common
+ * case terse; an array lets a project track more than one binder — e.g.
+ * next-intl's client `useTranslations` (from `next-intl`) **and** its server
+ * `getTranslations` (from `next-intl/server`). All listed hooks bind a
+ * namespace from their first string argument; `const t = await getTranslations
+ * ('ns')` is handled (the `await` is unwrapped).
+ */
+export type HookSpec = HookConfig | HookConfig[];
+
+/**
  * Descriptor for a builder function that reads translation keys directly from
  * the message tree (e.g. `buildMetadata({namespace, key})`). Lexen will
  * collect aliases for the callee names, resolve the namespace and key-template
@@ -84,7 +94,7 @@ export interface RawConfig {
     defaultLocale?: string;
     filePatterns: string[];
     ignore?: string[];
-    hook: HookConfig;
+    hook: HookSpec;
     layout: LayoutConfig;
     preserve?: PreserveConfig;
     /** String shorthand ("ast" | "typechecker") or object with sub-flags. Defaults to "ast". */
@@ -97,6 +107,14 @@ export interface Config extends RawConfig {
     projectRoot: string;
     configPath: string;
     absSrcDir: string;
+    /**
+     * Every configured hook, normalized to an array (the raw `hook` may be a
+     * single object). `hook` itself is normalized to the first entry so legacy
+     * `config.hook.name` reads keep working.
+     */
+    hooksResolved: HookConfig[];
+    /** Normalized to the primary (first) hook — narrows RawConfig's `HookSpec`. */
+    hook: HookConfig;
     /** Normalized resolver config — object form, with defaults applied. */
     resolverResolved: Required<Pick<ResolverConfig, 'mode' | 'propFlow'>> & {tsconfig?: string};
     /**

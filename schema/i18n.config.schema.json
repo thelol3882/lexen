@@ -6,6 +6,23 @@
     "type": "object",
     "required": ["srcDir", "locales", "filePatterns", "hook", "layout"],
     "additionalProperties": false,
+    "$defs": {
+        "hookConfig": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Exact function name of the hook (e.g. \"useTranslations\", \"getTranslations\", or \"useTranslation\")."
+                },
+                "package": {
+                    "type": "string",
+                    "description": "Import source filter — only hook calls imported from this package are matched (e.g. \"next-intl\" or \"next-intl/server\")."
+                }
+            }
+        }
+    },
     "properties": {
         "$schema": {
             "type": "string",
@@ -37,20 +54,11 @@
             "description": "Glob patterns of files to exclude from scanning (e.g. [\"**/*.d.ts\"])."
         },
         "hook": {
-            "type": "object",
-            "description": "The translation hook lexen tracks (e.g. useTranslations from next-intl).",
-            "required": ["name"],
-            "additionalProperties": false,
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Exact function name of the hook (e.g. \"useTranslations\" or \"useTranslation\")."
-                },
-                "package": {
-                    "type": "string",
-                    "description": "Import source filter — only hook calls imported from this package are matched (e.g. \"next-intl\")."
-                }
-            }
+            "description": "The namespace-binding hook(s) lexen tracks. A single object for one hook (e.g. useTranslations from next-intl), or an array to track several (e.g. also getTranslations from next-intl/server). Each binds a namespace from its first string argument; `await getTranslations('ns')` is handled.",
+            "oneOf": [
+                { "$ref": "#/$defs/hookConfig" },
+                { "type": "array", "items": { "$ref": "#/$defs/hookConfig" }, "minItems": 1 }
+            ]
         },
         "layout": {
             "type": "object",

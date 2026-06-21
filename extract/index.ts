@@ -138,10 +138,20 @@ function extractFromSourceFile(ctx: ExtractCtx): void {
         if (namespaces !== undefined) entry.namespaces = namespaces;
         unresolvedCalls.push(entry);
     };
+    // Primary hook drives hook-return resolution (custom `useXxx()` binders);
+    // getTranslations & friends are never destructured, so the primary is right.
     const hookName = config.hook.name;
     const hookPackage = config.hook.package;
 
-    const hookAliases = collectHookAliases(sourceFile, hookName, hookPackage);
+    // Union the import aliases of every configured hook (e.g. useTranslations
+    // from next-intl AND getTranslations from next-intl/server). A single set
+    // means the rest of the walker treats them uniformly.
+    const hookAliases = new Set<string>();
+    for (const hook of config.hooksResolved) {
+        for (const alias of collectHookAliases(sourceFile, hook.name, hook.package)) {
+            hookAliases.add(alias);
+        }
+    }
 
     // Collect aliases for every configured call extractor. Each callee name (or
     // array of names) may be imported under a different local alias.

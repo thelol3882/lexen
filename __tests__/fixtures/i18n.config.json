@@ -4,7 +4,10 @@
   "defaultLocale": "en",
   "filePatterns": ["**/*.{ts,tsx}"],
   "ignore": ["**/*.d.ts"],
-  "hook": {"name": "useTranslations", "package": "next-intl"},
+  "hook": [
+    {"name": "useTranslations", "package": "next-intl"},
+    {"name": "getTranslations", "package": "next-intl/server"}
+  ],
   "resolver": {"mode": "typechecker", "propFlow": true},
   "layout": {
     "feature": "features/{namespace}/locales/{locale}.json",

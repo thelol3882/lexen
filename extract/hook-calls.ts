@@ -12,12 +12,15 @@ export function callToNamespaces(
     checker: ts.TypeChecker | null,
     onUnresolved?: (arg: ts.Node) => void,
 ): string[] | null {
-    if (!ts.isCallExpression(node)) return null;
-    const name = getCallReceiverName(node);
+    // `const t = await getTranslations('ns')` — unwrap the AwaitExpression so
+    // server-side binders resolve exactly like their synchronous siblings.
+    const call = ts.isAwaitExpression(node) ? node.expression : node;
+    if (!ts.isCallExpression(call)) return null;
+    const name = getCallReceiverName(call);
     if (!name || !hookAliases.has(name)) return null;
 
-    if (node.arguments.length >= 1) {
-        const arg = node.arguments[0];
+    if (call.arguments.length >= 1) {
+        const arg = call.arguments[0];
         if (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) {
             return [arg.text];
         }

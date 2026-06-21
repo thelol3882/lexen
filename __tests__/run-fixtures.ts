@@ -47,6 +47,10 @@ const EXPECTED: Expectation[] = [
             // hookReturn.tsx — via useDemoTable() hook-return resolution
             'hookReturn.title',
             'hookReturn.renamed',
+            // serverUsage.tsx — getTranslations (next-intl/server) + await-unwrap
+            'server.title',
+            'tab.overview',
+            'tab.details',
         ],
     },
     {

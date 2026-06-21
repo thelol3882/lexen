@@ -1,6 +1,6 @@
 {
     "name": "@thelol3882/lexen",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Config-driven translation extraction, validation, and sorting for next-intl, react-i18next, and friends. Built on the TypeScript compiler API.",
     "type": "module",
     "author": "Dias Shabarov",

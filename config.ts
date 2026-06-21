@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import type {CallExtractorConfig, Config, RawConfig, ResolverConfig, ResolverMode} from './types.js';
+import type {CallExtractorConfig, Config, HookConfig, RawConfig, ResolverConfig, ResolverMode} from './types.js';
 
 const DEFAULT_CONFIG_FILE = 'i18n.config.json';
 
@@ -25,12 +25,17 @@ export function loadConfig(projectRoot: string, configFile: string = DEFAULT_CON
     validate(raw, configPath);
 
     const absSrcDir = path.join(projectRoot, raw.srcDir);
+    const hooksResolved: HookConfig[] = Array.isArray(raw.hook) ? raw.hook : [raw.hook];
 
     return {
         ...raw,
         projectRoot,
         configPath,
         absSrcDir,
+        hooksResolved,
+        // Normalize `hook` to the primary entry so `config.hook.name` reads
+        // (validation messages, hook-return resolution) keep working.
+        hook: hooksResolved[0],
         resolverResolved: normalizeResolver(raw.resolver),
         globalSubNamespaces: discoverGlobalSubNamespaces(raw, absSrcDir),
     };
@@ -159,6 +164,26 @@ function validateCalls(calls: unknown, configPath: string): void {
     }
 }
 
+function validateHook(hook: RawConfig['hook'], configPath: string): void {
+    const entries = Array.isArray(hook) ? hook : [hook];
+    if (entries.length === 0) {
+        throw new Error(`${configPath}: "hook" array must not be empty`);
+    }
+    for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i] as Partial<HookConfig> | undefined;
+        const where = Array.isArray(hook) ? `hook[${i}]` : 'hook';
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+            throw new Error(`${configPath}: "${where}" must be an object with a "name" field`);
+        }
+        if (typeof entry.name !== 'string' || !entry.name) {
+            throw new Error(`${configPath}: "${where}.name" is required`);
+        }
+        if (entry.package !== undefined && typeof entry.package !== 'string') {
+            throw new Error(`${configPath}: "${where}.package" must be a string`);
+        }
+    }
+}
+
 function validate(cfg: RawConfig, configPath: string): void {
     const required = ['srcDir', 'locales', 'filePatterns', 'hook', 'layout'] as const;
     for (const key of required) {
@@ -172,9 +197,7 @@ function validate(cfg: RawConfig, configPath: string): void {
     if (!Array.isArray(cfg.filePatterns) || cfg.filePatterns.length === 0) {
         throw new Error(`${configPath}: "filePatterns" must be a non-empty array`);
     }
-    if (!cfg.hook.name) {
-        throw new Error(`${configPath}: "hook.name" is required`);
-    }
+    validateHook(cfg.hook, configPath);
     if (!cfg.layout.feature) {
         throw new Error(`${configPath}: "layout.feature" is required`);
     }
