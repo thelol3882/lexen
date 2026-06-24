@@ -15,6 +15,7 @@ import {extractAll} from './extract/index.js';
 import {sortAll} from './locales.js';
 import {runSync} from './sync.js';
 import {collectRuleViolations, runLint} from './lint.js';
+import {collectKeyContexts, renderContextsHuman} from './context.js';
 import {parseFormat, renderGithubReport, renderGithubViolations, renderJsonReport, renderJsonViolations} from './reporters.js';
 import {c, log, setQuiet, setSilent} from './util/log.js';
 
@@ -24,7 +25,7 @@ const __dirname = path.dirname(__filename);
 const PRESETS_DIR = path.join(__dirname, 'presets');
 const DEFAULT_PRESET = 'next-intl';
 
-const SUBCOMMANDS = ['extract', 'check', 'sort', 'init', 'lint'] as const;
+const SUBCOMMANDS = ['extract', 'check', 'sort', 'init', 'lint', 'context'] as const;
 type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function listPresets(): string[] {
@@ -56,6 +57,8 @@ function printUsage(): void {
     log(`                                       CI mode — fail on drift or invalid namespaces`);
     log(`  ${c.cyan}pnpm lexen lint${c.reset}    [feature] [--naming] [--format=human|github|json]`);
     log(`                                       rules-violation diagnostics (file:line + fix hint)`);
+    log(`  ${c.cyan}pnpm lexen context${c.reset} [feature] [--untranslated] [--format=human|json]`);
+    log(`                                       per-key JSX call-site context for translators / agents`);
     log(`  ${c.cyan}pnpm lexen sort${c.reset}                            normalize key order in every locale file`);
     log(`  ${c.cyan}pnpm lexen init${c.reset}    [--preset=<name>] [--force]  scaffold i18n.config.json`);
     log('');
@@ -317,7 +320,27 @@ function main(): number {
             const featureFilter = positional[1] ?? getFlagValue(args, '--feature') ?? null;
             return runLint(loadConfig(projectRoot), featureFilter, format, naming);
         }
+        case 'context':
+            return runContext(args, projectRoot);
     }
+}
+
+function runContext(args: string[], projectRoot: string): number {
+    const format = parseFormat(args);
+    const untranslatedOnly = args.includes('--untranslated');
+    const positional = args.filter(a => !a.startsWith('-'));
+    const featureFilter = positional[1] ?? getFlagValue(args, '--feature') ?? null;
+
+    const config = loadConfig(projectRoot);
+    const contexts = collectKeyContexts(config, {featureFilter, untranslatedOnly});
+
+    // Only `human` and `json` are meaningful here; anything else emits JSON.
+    if (format === 'human') {
+        renderContextsHuman(contexts, config.locales);
+    } else {
+        console.log(JSON.stringify(contexts, null, 2));
+    }
+    return 0;
 }
 
 try {

@@ -41,10 +41,12 @@ interface ExtractCtx {
     hookReturnCache: Map<ts.Symbol, Map<string, Set<string>>>;
     /** All program source files — for cross-file prop-flow caller lookup. */
     programSourceFiles: ts.SourceFile[];
+    /** Optional context sink threaded to `collectTranslationCall`. */
+    onKeyContext?: (key: string, namespaces: string[], call: ts.CallExpression) => void;
 }
 
 export function extractAll(config: Config, options: ExtractOptions = {}): ExtractResult {
-    const {featureFilter = null, resolverOverride} = options;
+    const {featureFilter = null, resolverOverride, onKeyContext} = options;
     const mode: ResolverMode = resolverOverride ?? config.resolverResolved.mode;
 
     const namespaceKeys: NamespaceKeys = new Map();
@@ -114,6 +116,7 @@ export function extractAll(config: Config, options: ExtractOptions = {}): Extrac
             hookReturnFlow: mode === 'typechecker',
             hookReturnCache,
             programSourceFiles,
+            onKeyContext,
         });
     }
 
@@ -121,7 +124,7 @@ export function extractAll(config: Config, options: ExtractOptions = {}): Extrac
 }
 
 function extractFromSourceFile(ctx: ExtractCtx): void {
-    const {config, sourceFile, relFile, featureFilter, namespaceKeys, autoPreserved, namespaceUsages, unresolvedCalls, dynamicKeys, checker, propFlow, hookReturnFlow, hookReturnCache, programSourceFiles} = ctx;
+    const {config, sourceFile, relFile, featureFilter, namespaceKeys, autoPreserved, namespaceUsages, unresolvedCalls, dynamicKeys, checker, propFlow, hookReturnFlow, hookReturnCache, programSourceFiles, onKeyContext} = ctx;
 
     const recordUnresolved = (call: 'useTranslations' | 't' | 'call', arg: ts.Node, namespaces?: string[]): void => {
         const {line, character} = ts.getLineAndCharacterOfPosition(sourceFile, arg.getStart(sourceFile));
@@ -306,6 +309,7 @@ function extractFromSourceFile(ctx: ExtractCtx): void {
                 checker,
                 (arg, namespaces) => recordUnresolved('t', arg, namespaces),
                 dynamicKeys,
+                onKeyContext,
             );
         }
         ts.forEachChild(node, collectKeys);

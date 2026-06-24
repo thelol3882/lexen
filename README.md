@@ -55,6 +55,8 @@ Then `pnpm i18n extract`, `pnpm i18n check`, etc.
 | `lexen check --format=human\|github\|json` | Output format for CI integrations (see below). |
 | `lexen lint` | Rules-violation diagnostics — `file:line:col` + fix hint, grouped by rule. Exit 1 if any. |
 | `lexen lint --naming` | Include rule 7 (camelCase key naming) in the report. |
+| `lexen context` | Per-key JSX call-site context (role, space budget, ICU vars, current values) for translators / AI agents. |
+| `lexen context --untranslated` | Same, but only keys with an empty `""` in some locale. |
 | `lexen lint --format=human\|github\|json` | Output format. |
 | `lexen sort` | Normalize key order in every locale file (deep-sort, alphabetical). |
 | `lexen init` | Scaffold `i18n.config.json` from a preset (`--preset`, `--force`). |
@@ -238,6 +240,41 @@ produces style nits rather than correctness findings.
 Exit 1 if any violations are found. See [`RULES.md`](./RULES.md) for the
 full rule reference.
 
+### `lexen context` — call-site context for translators & agents
+
+```bash
+pnpm lexen context [feature] [--untranslated] [--format=human|json]
+```
+
+Filling an empty `""` value means staring at a bare key like
+`booking.confirm.onBox` and guessing the copy. `lexen context` hands over the
+call-site instead: lexen already knows where every `t('key')` lives, so it
+reports the wrapping JSX element, its style props, an inferred **role** and
+**space budget**, the ICU placeholders the translation must keep, and the
+current value in every locale.
+
+```
+booking
+  confirm.onBox  [eyebrow-label · tight]
+    features/booking/components/ConfirmStep.tsx:37:18  <Text fz=11 fw=600 tt=uppercase c=gray.5>
+    vars: {n}
+    ru: "Ваш автомобиль на боксе №{n}"
+    kk: "" ← needs translation
+```
+
+`--format=json` emits the same as a structured array — the intended feed for a
+translator subagent (give it a professional-translator persona, the bundle,
+and the `spaceBudget` so it doesn't write copy that overflows the UI). lexen's
+`check` (placeholder drift) then gates the agent's output: if it drops `{n}`,
+CI fails. `--untranslated` narrows to keys with at least one empty locale.
+
+The `role` / `spaceBudget` are heuristics read off the wrapping element's props
+(`fz≤12` / `size=xs` / `tt=uppercase` / a button-like tag → `tight`;
+`aria-label` / `title` → `roomy`). On a Mantine codebase, where typography
+lives in JSX props, this is statically visible. It catches most "too long for
+the UI" risk, but a static budget can't know the pill is 120px wide — that's
+the job of a future live-render layer (see [`ROADMAP.md`](./ROADMAP.md)).
+
 ### `check --strict` — one command for CI
 
 ```bash
@@ -398,6 +435,7 @@ lexen/
 ├── validate.ts         Namespace usage + ICU placeholder-drift + preserve hygiene.
 ├── sync.ts             Reconciles extracted keys ↔ locale files.
 ├── lint.ts             `lexen lint` — rules-violation diagnostics.
+├── context.ts          `lexen context` — per-key JSX call-site context for translators.
 ├── reporters.ts        Output formatters (human / github / json).
 ├── types.ts            Shared type definitions.
 ├── schema/             Config JSON Schema (i18n.config.schema.json).

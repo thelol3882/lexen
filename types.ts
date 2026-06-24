@@ -1,3 +1,5 @@
+import type ts from 'typescript';
+
 export interface LayoutConfig {
     feature: string;
     widget?: string;
@@ -189,6 +191,14 @@ export interface ExtractOptions {
     featureFilter?: string | null;
     /** Override the resolver mode for this run (used by --compare-resolvers). */
     resolverOverride?: ResolverMode;
+    /**
+     * Optional sink invoked for every statically-resolved literal `t('key')`
+     * call, with its resolved namespaces and the call node. Lets `lexen context`
+     * attach JSX call-site context without duplicating namespace resolution.
+     * Only fires for plain string-literal keys — the ones with a real source
+     * position to anchor context to.
+     */
+    onKeyContext?: (key: string, namespaces: string[], call: ts.CallExpression) => void;
 }
 
 export interface SyncOptions {

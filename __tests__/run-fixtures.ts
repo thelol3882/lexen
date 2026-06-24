@@ -12,6 +12,7 @@ import path from 'path';
 import {fileURLToPath} from 'url';
 
 import {loadConfig} from '../config.js';
+import {collectKeyContexts} from '../context.js';
 import {extractAll} from '../extract/index.js';
 import {collectRuleViolations} from '../lint.js';
 import {parseFormat} from '../reporters.js';
@@ -277,7 +278,45 @@ function main(): number {
         }
     }
 
-    const totalAssertions = EXPECTED.length + 5 + 4 + 1;
+    // ── Phase 4: `lexen context` call-site extraction ────────────────────────
+    // contextUsage.tsx wraps t('ctx.*') calls in stand-in components carrying
+    // Mantine-style props; assert the role/space-budget heuristics + placeholder
+    // and source resolution from locales/en.json.
+    {
+        const contexts = collectKeyContexts(config, {featureFilter: 'demo'});
+        const byKey = new Map(contexts.map(ctx => [ctx.key, ctx]));
+        const expectations: {key: string; role: string; budget: string}[] = [
+            {key: 'ctx.heading', role: 'heading', budget: 'tight'},
+            {key: 'ctx.eyebrow', role: 'eyebrow-label', budget: 'tight'},
+            {key: 'ctx.body', role: 'body', budget: 'medium'},
+            {key: 'ctx.cta', role: 'button', budget: 'tight'},
+            {key: 'ctx.search', role: 'a11y-label', budget: 'roomy'},
+        ];
+        let ctxFail = false;
+        for (const {key, role, budget} of expectations) {
+            const got = byKey.get(key);
+            if (!got || got.jsx.role !== role || got.jsx.spaceBudget !== budget) {
+                // eslint-disable-next-line no-console
+                console.error(`FAIL context-${key}: expected ${role}/${budget}, got ${got ? `${got.jsx.role}/${got.jsx.spaceBudget}` : 'missing'}`);
+                ctxFail = true;
+            }
+        }
+        // Placeholder extraction + source resolution from the seeded locale.
+        const body = byKey.get('ctx.body');
+        if (!body || body.jsx.element !== 'Text' || !body.placeholders.includes('count') || body.source.en !== 'Only {count} steps left') {
+            // eslint-disable-next-line no-console
+            console.error(`FAIL context-body-detail: element/placeholder/source mismatch (element=${body?.jsx.element} vars=${body?.placeholders} src=${body?.source.en})`);
+            ctxFail = true;
+        }
+        if (ctxFail) {
+            failures++;
+        } else {
+            // eslint-disable-next-line no-console
+            console.log('PASS context: role/budget/element/placeholder/source resolved for 5 call sites');
+        }
+    }
+
+    const totalAssertions = EXPECTED.length + 5 + 4 + 1 + 1;
     if (failures > 0) {
         // eslint-disable-next-line no-console
         console.error(`\n${failures} fixture assertion(s) failed.`);

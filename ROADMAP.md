@@ -136,6 +136,78 @@ The safe auto-fix set is small — `lint --fix` will primarily be a reporter.
 The value of `--unsafe-fixes` is having a guided codemod path for bulk
 renames (rule 7) that the developer reviews before committing.
 
+### Translation context for agents & humans — Layer 1 planned, Layer 2 future
+
+A translator (AI agent or human) filling empty `""` values stares at a bare
+key like `booking.confirm.onBox` and guesses the copy. Lexen already owns the
+map the translator needs — `key → namespace → file → call-site` — so it can
+hand over **context** instead of a naked key. Two layers on one foundation.
+
+#### Layer 1 — `lexen context` (static context bundle) — planned
+
+A new command that emits, per key, a structured context object the translator
+consumes. Pure static analysis; no runtime, no Provider — reuses the extract
+AST walk and the existing namespace resolution.
+
+```bash
+pnpm lexen context [feature] [--untranslated] [--format=human|json]
+```
+
+The high-value signal comes free on a Mantine codebase: typography and sizing
+live in JSX props (`fz`, `size`, `tt`, `fw`) on the call-site element, so the
+AST sees the **space budget** of each string. Bundle shape:
+
+```json
+{
+  "key": "confirm.onBox",
+  "namespace": "booking",
+  "callSite": "src/features/booking/components/ConfirmStep.tsx:37:18",
+  "component": "ConfirmStep",
+  "jsx": {
+    "element": "Text",
+    "props": { "fz": 11, "fw": 600, "tt": "uppercase" },
+    "role": "eyebrow-label",
+    "spaceBudget": "tight"
+  },
+  "placeholders": ["n"],
+  "source": { "ru": "Ваш автомобиль на боксе №{n}", "kk": "" }
+}
+```
+
+- `role` / `spaceBudget` — heuristic from the wrapping element's style props
+  (`fz≤12`/`size=xs`/`tt=uppercase`/pill container → `tight`). Tells the agent
+  "keep it short" before it writes anything.
+- `placeholders` — ICU vars the translation must keep. Already validated by
+  `lexen check` (placeholder drift), so the agent's output is gated.
+- `source` — current value per locale; empty `""` marks what needs filling.
+
+Pairs with a Claude subagent (professional-translator persona): lexen provides
+context + the deterministic `lexen check` quality gate; the agent writes the
+copy. Lexen never does the orchestration — it provides context and validation.
+
+Catches ~most overflow risk via `spaceBudget`, but a static budget can't know
+the wrapping pill is 120px and the Kazakh string is 6 chars longer — that's
+Layer 2's job.
+
+#### Layer 2 — live in-context editing (`@lexen/live` companion) — future
+
+When a team / a professional human translator appears, a dev-only browser
+overlay: a wrapper over next-intl messages tags each rendered string with its
+key via invisible Unicode markers (Tolgee's technique — survives plain
+`t()→string` into the DOM). A DOM observer + side panel lets the translator
+alt+click any UI text → see the key + every locale + **actual overflow** →
+edit → write back through lexen's `key→file` map, gated by `lexen check`.
+
+- Lives in a **separate package**, never in the static core — keeps the CLI
+  framework-agnostic and zero-runtime (see STRATEGY.md mindset).
+- Reuses Layer 1's key map and the same validation gate; building Layer 1
+  first is not throwaway work.
+- Bridges agent + human: Playwright renders a screen → an agent translator
+  sees the overflow in a screenshot and self-corrects, same loop a human uses.
+- Trigger to start Layer 2: a real second person editing locales (mirrors the
+  phase A→B trigger in STRATEGY.md). Until then, Layer 1 covers the solo +
+  agent workflow.
+
 ### Incremental program + `--watch` — planned
 
 Re-use the TypeScript compiler's incremental build to avoid reparsing the

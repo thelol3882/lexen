@@ -1,1 +1,9 @@
-{}
+{
+  "ctx": {
+    "heading": "Confirm",
+    "eyebrow": "FINAL",
+    "body": "Only {count} steps left",
+    "cta": "Continue",
+    "search": "Search the list"
+  }
+}

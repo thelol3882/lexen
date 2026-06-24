@@ -52,6 +52,8 @@ export function collectTranslationCall(
      *  plain literal. They must mirror runtime values, so naming rules (rule 7)
      *  exempt them. */
     dynamicKeys?: NamespaceKeys,
+    /** Context sink — fired only for literal keys (those with a source anchor). */
+    onKeyContext?: (key: string, namespaces: string[], call: ts.CallExpression) => void,
 ): void {
     if (node.arguments.length < 1) return;
 
@@ -91,6 +93,7 @@ export function collectTranslationCall(
 
     if (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) {
         addKeyToNamespaces(arg.text, matchingNamespaces, namespaceKeys);
+        if (onKeyContext) onKeyContext(arg.text, matchingNamespaces, node);
         return;
     }
 
