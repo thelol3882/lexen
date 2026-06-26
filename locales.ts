@@ -33,12 +33,26 @@ export function sortObjectKeys<T extends JsonValue>(obj: T): T {
     return sorted as T;
 }
 
-export function getLeafKeys(obj: JsonObject, prefix: string = ''): string[] {
+// Values stored as a JSON array (e.g. "items": ["a", "b"]) are traversed as an
+// index-keyed map so they surface under "items.0", "items.1", … — matching how
+// next-intl resolves `t(`items.${i}`)`. Treating arrays as opaque leaves made
+// extract see those keys as missing and overwrite the array with empty strings.
+function isContainer(v: JsonValue | undefined): v is JsonObject | JsonValue[] {
+    return !!v && typeof v === 'object';
+}
+
+function containerEntries(obj: JsonObject | JsonValue[]): [string, JsonValue][] {
+    return Array.isArray(obj)
+        ? obj.map((v, i) => [String(i), v] as [string, JsonValue])
+        : Object.entries(obj);
+}
+
+export function getLeafKeys(obj: JsonObject | JsonValue[], prefix: string = ''): string[] {
     let keys: string[] = [];
-    for (const [k, v] of Object.entries(obj)) {
+    for (const [k, v] of containerEntries(obj)) {
         const full = prefix ? `${prefix}.${k}` : k;
-        if (v && typeof v === 'object' && !Array.isArray(v)) {
-            keys = keys.concat(getLeafKeys(v as JsonObject, full));
+        if (isContainer(v)) {
+            keys = keys.concat(getLeafKeys(v, full));
         } else {
             keys.push(full);
         }
@@ -47,47 +61,68 @@ export function getLeafKeys(obj: JsonObject, prefix: string = ''): string[] {
 }
 
 export function getNestedValue(obj: JsonObject | undefined, dotPath: string): JsonValue | undefined {
-    return dotPath.split('.').reduce<JsonValue | undefined>(
-        (o, k) => (o && typeof o === 'object' && !Array.isArray(o) ? (o as JsonObject)[k] : undefined),
-        obj,
-    );
+    return dotPath.split('.').reduce<JsonValue | undefined>((o, k) => {
+        if (!isContainer(o)) return undefined;
+        if (Array.isArray(o)) {
+            const idx = Number(k);
+            return Number.isInteger(idx) && idx >= 0 && idx < o.length ? o[idx] : undefined;
+        }
+        return o[k];
+    }, obj);
 }
 
 export function setNestedValue(obj: JsonObject, dotPath: string, value: JsonValue): void {
     const parts = dotPath.split('.');
-    let current: JsonObject = obj;
+    let current: JsonObject | JsonValue[] = obj;
     for (let i = 0; i < parts.length - 1; i++) {
-        const next = current[parts[i]];
-        if (!next || typeof next !== 'object' || Array.isArray(next)) {
-            current[parts[i]] = {};
+        const key = parts[i];
+        const next: JsonValue | undefined = (current as JsonObject)[key];
+        // Descend into existing containers (objects AND arrays) so writing a new
+        // sibling key never clobbers an array-stored value back into an object.
+        // Missing intermediate containers are created as objects (lexen's
+        // canonical form); existing arrays are left as arrays.
+        if (isContainer(next)) {
+            current = next;
+        } else {
+            const child: JsonObject = {};
+            (current as JsonObject)[key] = child;
+            current = child;
         }
-        current = current[parts[i]] as JsonObject;
     }
-    current[parts[parts.length - 1]] = value;
+    (current as JsonObject)[parts[parts.length - 1]] = value;
 }
 
 export function deleteNestedValue(obj: JsonObject, dotPath: string): void {
     const parts = dotPath.split('.');
-    const stack: {obj: JsonObject; key: string}[] = [];
-    let current: JsonObject | undefined = obj;
+    const stack: {obj: JsonObject | JsonValue[]; key: string}[] = [];
+    let current: JsonObject | JsonValue[] | undefined = obj;
 
     for (let i = 0; i < parts.length - 1; i++) {
-        if (!current || typeof current !== 'object') return;
+        if (!isContainer(current)) return;
         stack.push({obj: current, key: parts[i]});
-        const child: JsonValue | undefined = current[parts[i]];
-        current = child && typeof child === 'object' && !Array.isArray(child) ? (child as JsonObject) : undefined;
+        const child: JsonValue | undefined = (current as JsonObject)[parts[i]];
+        current = isContainer(child) ? child : undefined;
     }
 
-    if (current && typeof current === 'object') {
-        delete current[parts[parts.length - 1]];
+    if (isContainer(current)) {
+        const leaf = parts[parts.length - 1];
+        if (Array.isArray(current)) {
+            const idx = Number(leaf);
+            if (Number.isInteger(idx) && idx >= 0 && idx < current.length) current.splice(idx, 1);
+        } else {
+            delete current[leaf];
+        }
     }
 
+    // Prune containers that became empty after the delete.
     for (let i = stack.length - 1; i >= 0; i--) {
         const {obj: parent, key} = stack[i];
-        const child = parent[key];
-        if (child && typeof child === 'object' && !Array.isArray(child) && Object.keys(child).length === 0) {
-            delete parent[key];
-        }
+        const child = (parent as JsonObject)[key];
+        const empty = isContainer(child)
+            && (Array.isArray(child) ? child.length === 0 : Object.keys(child).length === 0);
+        if (!empty) continue;
+        if (Array.isArray(parent)) parent.splice(Number(key), 1);
+        else delete parent[key];
     }
 }
 

@@ -101,6 +101,11 @@ const EXPECTED: Expectation[] = [
             'metadata.list.description',
         ],
     },
+    {
+        // arrayloc/usage.tsx — number-literal union over an array-backed locale
+        namespace: 'arrayloc',
+        keys: ['items.0', 'items.1', 'items.2'],
+    },
 ];
 
 function main(): number {
@@ -316,7 +321,32 @@ function main(): number {
         }
     }
 
-    const totalAssertions = EXPECTED.length + 5 + 4 + 1 + 1;
+    // ── Phase 5: array-backed locale values ──────────────────────────────────
+    // arrayloc stores items.0..2 as a JSON array. The read path must treat
+    // array elements as present keys, so `check` reports zero missing and never
+    // rewrites the array into empty-string keys (regression: data-loss on
+    // extract). write:false keeps the fixture locale untouched.
+    {
+        // Isolate the arrayloc namespace from the report — runSync still walks
+        // the global `common` namespace (unseeded in fixtures) under any filter.
+        const arrayResult = runSync(config, {checkOnly: true, write: false, featureFilter: 'arrayloc'});
+        const arrMissing = (arrayResult.report?.missing ?? []).filter(m => m.namespace === 'arrayloc');
+        const arrUntranslated = (arrayResult.report?.untranslated ?? []).filter(m => m.namespace === 'arrayloc');
+        if (arrMissing.length !== 0) {
+            // eslint-disable-next-line no-console
+            console.error(`FAIL arrayloc-present: expected 0 missing for arrayloc, got [${arrMissing.map(m => m.key).join(', ')}]`);
+            failures++;
+        } else if (arrUntranslated.length !== 0) {
+            // eslint-disable-next-line no-console
+            console.error(`FAIL arrayloc-synced: expected 0 untranslated for arrayloc, got [${arrUntranslated.map(m => m.key).join(', ')}]`);
+            failures++;
+        } else {
+            // eslint-disable-next-line no-console
+            console.log('PASS arrayloc-present: array-stored values recognized as synced (0 missing)');
+        }
+    }
+
+    const totalAssertions = EXPECTED.length + 5 + 4 + 1 + 1 + 1;
     if (failures > 0) {
         // eslint-disable-next-line no-console
         console.error(`\n${failures} fixture assertion(s) failed.`);
