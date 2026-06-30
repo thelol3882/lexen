@@ -63,6 +63,9 @@ import type {
 
 import { assertPathInside } from './security.js';
 
+import { readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+
 // ---------------------------------------------------------------------------
 // Extended response types (superset of protocol.ts shapes)
 // ---------------------------------------------------------------------------
@@ -109,32 +112,68 @@ function loadCfg(): Config {
  * Both `extractAll` and `collectKeyContexts` build a full `ts.Program` over the
  * whole app when the resolver is "typechecker" — 5-15s each on a large app. The
  * panel hits getKey on every alt-click, so without caching each click pays that
- * cost twice. The dynamic-key set and per-key JSX context are derived from
- * SOURCE, which does not change while a translator is editing locale JSON, so we
- * memoize them for the dev-server session behind a short TTL. Locale VALUES are
- * still read fresh on every request, and saveKey's check-gate runs on live data,
- * so a stale analysis can only ever affect the panel's read-only context hints.
+ * cost twice. The dynamic-key set and per-key JSX context are derived from SOURCE
+ * CODE, so we build them once and reuse the result for the entire dev-server
+ * session — invalidating only when a source file actually changes.
+ *
+ * Invalidation is by file mtime, not a timer: we take the newest mtime across the
+ * project's code files and rebuild only when it advances. This deliberately
+ * IGNORES locale JSON, so saving a translation never triggers a rebuild — the
+ * structural analysis it feeds is unchanged. Locale VALUES are always read fresh,
+ * and saveKey's check-gate runs on live data, so a cached analysis can only ever
+ * affect the panel's read-only context hints (and even those refresh the instant
+ * you edit the component).
  */
 interface AnalysisCache {
     configPath: string;
-    builtAt: number;
+    sourceMtime: number;
     contexts: KeyContext[];
     dynamicKeys: Map<string, Set<string>>;
 }
 
 let analysisCache: AnalysisCache | null = null;
 
-/** How long a cached analysis stays valid before the next build refreshes it. */
-const ANALYSIS_TTL_MS = 30_000;
+/** Code-file extensions whose edits can change extraction/context output. */
+const CODE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs']);
+/** Directories never worth walking when looking for source changes. */
+const SKIP_DIRS = new Set(['node_modules', '.next', '.git', 'dist', '.turbo', 'coverage']);
+
+/** Newest mtime (ms) across code files under `dir`; locale JSON is ignored. */
+function newestSourceMtime(dir: string): number {
+    let newest = 0;
+    let entries;
+    try {
+        entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+        return newest; // unreadable dir — treat as no contribution
+    }
+    for (const entry of entries) {
+        if (entry.isDirectory()) {
+            if (SKIP_DIRS.has(entry.name)) continue;
+            const m = newestSourceMtime(join(dir, entry.name));
+            if (m > newest) newest = m;
+        } else if (entry.isFile()) {
+            const dot = entry.name.lastIndexOf('.');
+            if (dot < 0 || !CODE_EXTENSIONS.has(entry.name.slice(dot))) continue;
+            try {
+                const m = statSync(join(dir, entry.name)).mtimeMs;
+                if (m > newest) newest = m;
+            } catch {
+                // file vanished between readdir and stat — ignore
+            }
+        }
+    }
+    return newest;
+}
 
 function getAnalysis(
     config: Config,
 ): { contexts: KeyContext[]; dynamicKeys: Map<string, Set<string>> } {
-    const now = Date.now();
+    const sourceMtime = newestSourceMtime(config.absSrcDir);
     if (
         analysisCache &&
         analysisCache.configPath === config.configPath &&
-        now - analysisCache.builtAt < ANALYSIS_TTL_MS
+        analysisCache.sourceMtime === sourceMtime
     ) {
         return analysisCache;
     }
@@ -142,7 +181,7 @@ function getAnalysis(
     const dynamicKeys = extractAll(config).dynamicKeys;
     const contexts = collectKeyContexts(config);
 
-    analysisCache = { configPath: config.configPath, builtAt: now, contexts, dynamicKeys };
+    analysisCache = { configPath: config.configPath, sourceMtime, contexts, dynamicKeys };
     return analysisCache;
 }
 
