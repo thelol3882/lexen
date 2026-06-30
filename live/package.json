@@ -1,0 +1,64 @@
+{
+    "name": "@thelol3882/lexen-live",
+    "version": "0.1.1",
+    "description": "Dev-only live-edit overlay for @thelol3882/lexen: invisible Unicode marker tagging, alt/cmd-click side panel, and write-back via lexen core. Zero prod cost — proven by bundle grep.",
+    "type": "module",
+    "private": false,
+    "author": "Dias Shabarov",
+    "license": "MIT",
+    "engines": {
+        "node": ">=18"
+    },
+    "exports": {
+        "./client": {
+            "types": "./dist/client/index.d.ts",
+            "default": "./dist/client/index.js"
+        },
+        "./server": {
+            "types": "./dist/server/index.d.ts",
+            "default": "./dist/server/index.js"
+        },
+        "./next/route": {
+            "types": "./dist/next/route.d.ts",
+            "default": "./dist/next/route.js"
+        },
+        "./agent": {
+            "types": "./dist/agent/index.d.ts",
+            "default": "./dist/agent/index.js"
+        }
+    },
+    "files": [
+        "dist",
+        "README.md"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "typecheck": "tsc --noEmit",
+        "pack:vendor": "pnpm pack",
+        "verify": "node scripts/verify-no-markers.mjs"
+    },
+    "peerDependencies": {
+        "@thelol3882/lexen": ">=0.3.1",
+        "next": ">=16",
+        "next-intl": ">=4",
+        "react": ">=19",
+        "react-dom": ">=19"
+    },
+    "devDependencies": {
+        "@types/node": "^20.19.43",
+        "@types/react": "^19.2.17",
+        "playwright": "^1.61.1",
+        "typescript": "^5.9.3"
+    },
+    "keywords": [
+        "i18n",
+        "next-intl",
+        "translation",
+        "live-edit",
+        "dev-tools",
+        "lexen"
+    ],
+    "publishConfig": {
+        "access": "public"
+    }
+}

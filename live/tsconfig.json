@@ -3,10 +3,9 @@
         "target": "ES2022",
         "module": "nodenext",
         "moduleResolution": "nodenext",
-        "lib": ["ES2022"],
-        "types": ["node"],
+        "lib": ["ES2022", "DOM"],
         "outDir": "dist",
-        "rootDir": ".",
+        "rootDir": "src",
         "strict": true,
         "esModuleInterop": true,
         "skipLibCheck": true,
@@ -14,9 +13,9 @@
         "declaration": true,
         "sourceMap": true,
         "isolatedModules": true,
-        "noEmit": false,
-        "allowImportingTsExtensions": false
+        "jsx": "react-jsx",
+        "noEmit": false
     },
-    "include": ["**/*.ts"],
-    "exclude": ["node_modules", "dist", "__tests__", "live"]
+    "include": ["src"],
+    "exclude": ["node_modules", "dist"]
 }
