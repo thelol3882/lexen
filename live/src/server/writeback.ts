@@ -102,6 +102,51 @@ function loadCfg(): Config {
 }
 
 // ---------------------------------------------------------------------------
+// Internal: cache the expensive static analysis (TypeScript program builds)
+// ---------------------------------------------------------------------------
+
+/**
+ * Both `extractAll` and `collectKeyContexts` build a full `ts.Program` over the
+ * whole app when the resolver is "typechecker" — 5-15s each on a large app. The
+ * panel hits getKey on every alt-click, so without caching each click pays that
+ * cost twice. The dynamic-key set and per-key JSX context are derived from
+ * SOURCE, which does not change while a translator is editing locale JSON, so we
+ * memoize them for the dev-server session behind a short TTL. Locale VALUES are
+ * still read fresh on every request, and saveKey's check-gate runs on live data,
+ * so a stale analysis can only ever affect the panel's read-only context hints.
+ */
+interface AnalysisCache {
+    configPath: string;
+    builtAt: number;
+    contexts: KeyContext[];
+    dynamicKeys: Map<string, Set<string>>;
+}
+
+let analysisCache: AnalysisCache | null = null;
+
+/** How long a cached analysis stays valid before the next build refreshes it. */
+const ANALYSIS_TTL_MS = 30_000;
+
+function getAnalysis(
+    config: Config,
+): { contexts: KeyContext[]; dynamicKeys: Map<string, Set<string>> } {
+    const now = Date.now();
+    if (
+        analysisCache &&
+        analysisCache.configPath === config.configPath &&
+        now - analysisCache.builtAt < ANALYSIS_TTL_MS
+    ) {
+        return analysisCache;
+    }
+
+    const dynamicKeys = extractAll(config).dynamicKeys;
+    const contexts = collectKeyContexts(config);
+
+    analysisCache = { configPath: config.configPath, builtAt: now, contexts, dynamicKeys };
+    return analysisCache;
+}
+
+// ---------------------------------------------------------------------------
 // GET /config
 // ---------------------------------------------------------------------------
 
@@ -154,9 +199,12 @@ export function getKey(
         return { error: `Unknown namespace: "${namespace}"`, status: 400 };
     }
 
+    // Static analysis (dynamic-key set + per-key JSX context) — cached per
+    // dev-server session so rapid alt-clicks don't each rebuild a ts.Program.
+    const { contexts, dynamicKeys } = getAnalysis(config);
+
     // Determine whether the key is dynamic (no write allowed for these)
-    const extracted = extractAll(config);
-    const isDynamic = extracted.dynamicKeys.get(namespace)?.has(dotKey) ?? false;
+    const isDynamic = dynamicKeys.get(namespace)?.has(dotKey) ?? false;
 
     // Read values and collect file paths per locale
     const values: Record<string, string> = {};
@@ -175,7 +223,6 @@ export function getKey(
     }
 
     // Translator context: find the matching KeyContext entry (first call site)
-    const contexts = collectKeyContexts(config);
     const ctx = contexts.find(c => c.namespace === namespace && c.key === dotKey) ?? null;
 
     // Collect placeholder names (union of context + parsed values)
@@ -229,8 +276,8 @@ export function saveKey(body: SaveRequest): SaveResponse {
     // -----------------------------------------------------------------------
     // 2. Refuse dynamic keys
     // -----------------------------------------------------------------------
-    const extracted = extractAll(config);
-    if (extracted.dynamicKeys.get(namespace)?.has(dotKey)) {
+    const { dynamicKeys } = getAnalysis(config);
+    if (dynamicKeys.get(namespace)?.has(dotKey)) {
         return {
             ok: false,
             checkCode: 3,

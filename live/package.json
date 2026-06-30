@@ -1,6 +1,6 @@
 {
     "name": "@thelol3882/lexen-live",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "description": "Dev-only live-edit overlay for @thelol3882/lexen: invisible Unicode marker tagging, alt/cmd-click side panel, and write-back via lexen core. Zero prod cost — proven by bundle grep.",
     "type": "module",
     "private": false,
