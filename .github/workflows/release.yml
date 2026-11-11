@@ -17,7 +17,7 @@ jobs:
           version: 10
       - uses: actions/setup-node@v4
         with:
-          # npm 12 (stage publish) needs Node 22.22.2 or newer.
+          # The latest npm needs Node 22.22.2 or newer.
           node-version: 24
           cache: pnpm
           # No registry-url: it writes an .npmrc with a placeholder token, which npm sends
@@ -27,9 +27,10 @@ jobs:
       - run: npm install -g npm@latest
       - name: Check the tag matches package.json
         run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
-      # Stages the version through npm trusted publishing (OIDC, provenance added automatically).
-      # It goes live after a maintainer approves it with 2FA: npmjs.com, or `npm stage approve <id>`.
-      - run: npm stage publish --access public
+      # Trusted publishing (OIDC, provenance added automatically). `npm stage publish` cannot log
+      # in this way; the registry stages the version when the package asks for approval, and it
+      # goes live after a maintainer approves it with 2FA (npmjs.com or `npm stage approve <id>`).
+      - run: npm publish --access public
       - run: gh release create "$GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
