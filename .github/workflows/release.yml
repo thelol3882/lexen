@@ -17,16 +17,18 @@ jobs:
           version: 10
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # npm 12 (stage publish) needs Node 22.22.2 or newer.
+          node-version: 24
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      # Trusted publishing (no token) needs npm 11.5.1 or newer; Node 22 ships npm 10.
+      # Trusted publishing and `npm stage` need a newer npm than Node ships.
       - run: npm install -g npm@latest
       - name: Check the tag matches package.json
         run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
-      # Authenticates through npm trusted publishing (OIDC); provenance is added automatically.
-      - run: npm publish --access public
+      # Stages the version through npm trusted publishing (OIDC, provenance added automatically).
+      # It goes live after a maintainer approves it with 2FA: npmjs.com, or `npm stage approve <id>`.
+      - run: npm stage publish --access public
       - run: gh release create "$GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
